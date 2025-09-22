@@ -2,7 +2,7 @@ import streamlit as st
 from pathlib import Path
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from mps import (
 	load_mapping,
@@ -12,6 +12,14 @@ from mps import (
 	week_columns_order,
 )
 from mps.data_processing import dataframe_to_excel_bytes
+from mps.data_processing import (
+    get_latest_version_for_program,
+    build_inc_pivot_for_horizon,
+    compute_to_go_by_bucket,
+    split_request_across_buckets,
+    lifo_apply_allocation,
+    build_simulation_export,
+)
 
 try:
 	from st_aggrid import AgGrid
@@ -85,7 +93,7 @@ if not version_sorted:
 	st.error("No valid 'MPS Ver' values found in the uploaded file.")
 	st.stop()
 
-# Defaults: latest as anchor, 3 most recent prior as comparisons
+# Defaults will be set after we know POR preference from preview long
 anchor_default = version_sorted[0]
 comparison_defaults = version_sorted[1:5]
 
@@ -121,9 +129,21 @@ except Exception:
 	_preview_long = pd.DataFrame()
 
 if not _preview_long.empty:
-	versions_in_applied = (
-		_preview_long.drop_duplicates(subset=["MPS Ver", "Ver_Date"]).sort_values("Ver_Date", ascending=False)["MPS Ver"].tolist()
-	)
+	# Prefer POR versions for defaults if present
+	if "MPS Type" in _preview_long.columns and (_preview_long["MPS Type"] == "POR").any():
+		por_meta = (
+			_preview_long[_preview_long["MPS Type"] == "POR"]
+			.drop_duplicates(subset=["MPS Ver", "Ver_Date"]).sort_values("Ver_Date", ascending=False)
+		)
+		versions_in_applied = por_meta["MPS Ver"].tolist()
+		if not versions_in_applied:
+			versions_in_applied = (
+				_preview_long.drop_duplicates(subset=["MPS Ver", "Ver_Date"]).sort_values("Ver_Date", ascending=False)["MPS Ver"].tolist()
+			)
+	else:
+		versions_in_applied = (
+			_preview_long.drop_duplicates(subset=["MPS Ver", "Ver_Date"]).sort_values("Ver_Date", ascending=False)["MPS Ver"].tolist()
+		)
 else:
 	versions_in_applied = version_sorted
 
@@ -172,7 +192,7 @@ with st.form("filters_form"):
 
 	apply_clicked = st.form_submit_button("Apply")
 
-col_btn1, col_btn2 = st.columns([1, 1])
+col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
 with col_btn1:
 	if st.button("Refresh"):
 		st.session_state["applied_programs"] = program_options
@@ -185,6 +205,15 @@ with col_btn1:
 		st.session_state["applied_ttl2"] = False
 		st.rerun()
 with col_btn2:
+	if st.button("Reset All"):
+		# Clear all session state keys used by this app
+		for k in list(st.session_state.keys()):
+			if k.startswith("applied_") or k.startswith("sim_"):
+				del st.session_state[k]
+		# Clear cached data (mapping)
+		get_mapping.clear()
+		st.rerun()
+with col_btn3:
 	st.write("")
 
 if apply_clicked:
@@ -252,7 +281,7 @@ delta_df, delta_week_quarter = build_delta_table(
 
 # --- AgGrid rendering helpers ---
 def build_quarter_grouped_column_defs(df: pd.DataFrame, week_quarter: Dict[str, str], colorize_delta: bool) -> List[dict]:
-	key_cols = ["Ver_Wk_Code", "Program", "Config 1", "Config 2"]
+	key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2"]
 	week_cols = [c for c in df.columns if c not in key_cols]
 
 	# Group weeks by quarter in order of appearance
@@ -272,7 +301,7 @@ def build_quarter_grouped_column_defs(df: pd.DataFrame, week_quarter: Dict[str, 
 			"pinned": "left",
 			"sortable": True,
 			"filter": True,
-			"minWidth": 140 if k == "Ver_Wk_Code" else 160,
+			"minWidth": 140 if k in ("Ver_Wk_Code", "MPS Type") else 160,
 		})
 
 	# Style function for delta colors
@@ -304,7 +333,7 @@ def build_quarter_grouped_column_defs(df: pd.DataFrame, week_quarter: Dict[str, 
 
 def render_aggrid(df: pd.DataFrame, week_quarter: Dict[str, str], is_delta: bool, key: str):
 	if AgGrid is None:
-		st.dataframe(df, use_container_width=True)
+		st.dataframe(df, width='stretch')
 		return
 	col_defs = build_quarter_grouped_column_defs(df, week_quarter, colorize_delta=is_delta)
 	grid_options = {
@@ -346,7 +375,7 @@ def render_aggrid_grouped(
 	key: str,
 ):
 	if AgGrid is None:
-		st.dataframe(df, use_container_width=True)
+		st.dataframe(df, width='stretch')
 		return
 
 	# Build column defs with row grouping on requested columns, keep Measurement visible and pinned
@@ -437,7 +466,7 @@ def render_aggrid_grouped(
 	)
 
 # --- Tabs with exports ---
-comp_tab, delta_tab, sim_tab = st.tabs(["Comparison Table", "Delta Table", "Simulation Table"])
+comp_tab, delta_tab, sim_tab = st.tabs(["Comparison Table", "Delta Table", "Simulation"])
 
 
 with comp_tab:
@@ -477,59 +506,149 @@ with delta_tab:
 	st.download_button("Export Delta XLSX", data=xlsx_d, file_name="delta.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with sim_tab:
-    st.caption("Simulation: Anchor version to-go values (weeks ≥ anchor week)")
-    # Filter long_df to anchor version only
-    anchor_long = long_df[long_df["MPS Ver"] == anchor_version].copy()
+	st.caption("Simulate cut/add on the latest POR for a selected Program. Applies to weeks ≥ that version's date (LIFO).")
 
-    # Build pivots for cumulative and incremental
-    anchor_pivot_cum, _ = build_comparison_table(
-        long_df=anchor_long,
-        mapping=mapping,
-        metric="Cumulative",
-        selected_versions=[anchor_version],
-        ttl_config1=ttl_config1,
-        ttl_config2=ttl_config2,
-    )
-    anchor_pivot_inc, _ = build_comparison_table(
-        long_df=anchor_long,
-        mapping=mapping,
-        metric="Incremental",
-        selected_versions=[anchor_version],
-        ttl_config1=ttl_config1,
-        ttl_config2=ttl_config2,
-    )
+	# Choose program (single)
+	prog_default = st.session_state["applied_programs"][0] if st.session_state.get("applied_programs") else (program_options[0] if program_options else "")
+	program_for_sim = st.selectbox("Program for Simulation", options=program_options, index=(program_options.index(prog_default) if prog_default in program_options else 0))
 
-    # Determine anchor date threshold
-    anchor_ver_date = (
-        anchor_long.drop_duplicates(subset=["Ver_Date"])["Ver_Date"].iloc[0]
-        if not anchor_long.empty else None
-    )
-    # Map weeks to Date_Code and keep only >= anchor date
-    wk_to_date = mapping.drop_duplicates(subset=["Wk_Code"]).set_index("Wk_Code")["Date_Code"].to_dict()
-    week_cols_all = [c for c in anchor_pivot_cum.columns if c not in ("Ver_Wk_Code", "Program", "Config 1", "Config 2")]
-    if anchor_ver_date is not None:
-        week_cols_togo = [wk for wk in week_cols_all if wk_to_date.get(wk) is not None and wk_to_date[wk] >= anchor_ver_date]
-    else:
-        week_cols_togo = week_cols_all
+	# Find latest version (prefer POR) for program
+	latest_meta = get_latest_version_for_program(long_df, program_for_sim, prefer_type="POR")
+	if latest_meta is None:
+		st.warning("No versions found for the selected program.")
+		st.stop()
+	mps_ver_latest, ver_date_latest, ver_wk_label = latest_meta
+	st.info(f"Latest version for {program_for_sim}: {ver_wk_label}")
 
-    sim_cum = anchor_pivot_cum[["Ver_Wk_Code", "Program", "Config 1", "Config 2", *week_cols_togo]].copy()
-    sim_inc = anchor_pivot_inc[["Ver_Wk_Code", "Program", "Config 1", "Config 2", *week_cols_togo]].copy()
+	# Build incremental pivot for horizon and To-Go by bucket
+	inc_pivot_hz, week_cols_hz = build_inc_pivot_for_horizon(
+		long_df=long_df, mapping=mapping, program=program_for_sim, version=mps_ver_latest, ver_date=ver_date_latest, ttl_config1=ttl_config1, ttl_config2=ttl_config2
+	)
+	to_go_df = compute_to_go_by_bucket(inc_pivot_hz, week_cols_hz)
+	if not week_cols_hz:
+		st.warning("No horizon weeks on/after the latest POR date for the selected program. Nothing to simulate.")
+		st.markdown("**Current To-Go (Program latest POR)**")
+		render_aggrid(to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]], {**comp_week_quarter, **delta_week_quarter}, is_delta=False, key="sim_togo_nowks")
+		st.stop()
 
-    # Render cumulative first, then incremental
-    # Combine into one table with Measurement column (Cumulative first, then Incremental)
-    sim_cum.insert(0, "Measurement", "Cumulative")
-    sim_inc.insert(0, "Measurement", "Incremental")
-    sim_df = pd.concat([sim_cum, sim_inc], ignore_index=True)
+	# Simulation inputs
+	with st.form("sim_form"):
+		c1, c2, c3 = st.columns([1.2, 1, 2])
+		with c1:
+			action = st.radio("Action", options=["Cut", "Add"], horizontal=True)
+		with c2:
+			amount = st.number_input("Amount", min_value=0.0, value=0.0, step=10.0, format="%0.1f")
+		with c3:
+			st.checkbox("Targeted allocation (edit per bucket)", key="sim_targeted", value=st.session_state.get("sim_targeted", False))
 
-    # Group by first four columns visually
-    render_aggrid_grouped(
-        sim_df,
-        {wk: delta_week_quarter.get(wk) or comp_week_quarter.get(wk) for wk in week_cols_togo},
-        group_cols=["Ver_Wk_Code", "Program", "Config 1", "Config 2"],
-        is_delta=False,
-        key="sim_grouped",
-    )
-    csv_s = sim_df.to_csv(index=False).encode("utf-8")
-    st.download_button("Export Simulation CSV", data=csv_s, file_name="simulation.csv", mime="text/csv")
-    xlsx_s = dataframe_to_excel_bytes(sim_df, sheet_name="Simulation")
-    st.download_button("Export Simulation XLSX", data=xlsx_s, file_name="simulation.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		# Editable targeted table when enabled
+		edited_allocs: Optional[pd.DataFrame] = None
+		if st.session_state.get("sim_targeted", False):
+			edit_df = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
+			edit_df["Requested"] = 0.0
+			if AgGrid is not None:
+				grid_options = {
+					"defaultColDef": {"editable": True, "resizable": True},
+					"columnDefs": [
+						{"field": "Config 1", "editable": False},
+						{"field": "Config 2", "editable": False},
+						{"field": "ToGo", "editable": False, "type": "rightAligned"},
+						{"field": "Mix", "editable": False, "type": "rightAligned"},
+						{"field": "Requested", "editable": True, "type": "rightAligned"},
+					],
+				}
+				ag_res = AgGrid(edit_df, gridOptions=grid_options, height=240, allow_unsafe_jscode=True, key="sim_edit_grid")
+				if isinstance(ag_res, dict) and "data" in ag_res:
+					edited_allocs = pd.DataFrame(ag_res["data"])  # streamlit-aggrid dict return
+				elif hasattr(ag_res, "data"):
+					edited_allocs = pd.DataFrame(getattr(ag_res, "data"))  # object-style return
+				else:
+					edited_allocs = edit_df
+			else:
+				st.markdown("Enter per-bucket values in the Requested column, then click Apply Simulation.")
+				edited_allocs = st.data_editor(edit_df, use_container_width=True, key="sim_edit_editor")
+
+		apply_sim = st.form_submit_button("Apply Simulation")
+
+	if amount <= 0 and not st.session_state.get("sim_targeted", False):
+		st.info("Enter a positive amount or enable targeted allocation and set per-bucket Requested values.")
+		# Show current to-go for context
+		st.markdown("**Current To-Go (Program latest POR)**")
+		render_aggrid(to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]], {**comp_week_quarter, **delta_week_quarter}, is_delta=False, key="sim_togo_table")
+		st.stop()
+
+	if apply_sim:
+		try:
+			# Build allocations
+			signed_amount = -float(amount) if action == "Cut" else float(amount)
+			targeted_map: Optional[Dict[Tuple[str, str], float]] = None
+			if st.session_state.get("sim_targeted", False) and edited_allocs is not None:
+				allocs = {}
+				for _, r in edited_allocs.iterrows():
+					val = float(r.get("Requested", 0.0))
+					if val == 0:
+						continue
+					key = (str(r.get("Config 1")), str(r.get("Config 2")))
+					allocs[key] = (-val if action == "Cut" else val)
+				targeted_map = allocs
+
+			allocations = split_request_across_buckets(to_go_df, signed_amount, targeted=targeted_map)
+
+			# Pre-check for cuts: cannot exceed to-go
+			violations: List[Tuple[str, str, float, float]] = []
+			to_go_lookup = { (str(r["Config 1"]), str(r["Config 2"])): float(r["ToGo"]) for _, r in to_go_df.iterrows() }
+			for key, amt in allocations.items():
+				if amt < 0:
+					requested_cut = -amt
+					available = to_go_lookup.get(key, 0.0)
+					if requested_cut > available + 1e-9:
+						violations.append((key[0], key[1], requested_cut, available))
+			if violations:
+				st.error("Simulation can’t be applied: requested cut exceeds remaining to-go.")
+				viol_df = pd.DataFrame(violations, columns=["Config 1", "Config 2", "Requested", "Available"])
+				st.dataframe(viol_df, use_container_width=True)
+				st.stop()
+
+			# Apply LIFO allocation
+			sim_inc = lifo_apply_allocation(inc_pivot_hz, week_cols_hz, allocations)
+
+			# Build Original / Simulated / Delta tables (show incremental only with MPS Type keys)
+			key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2"]
+			orig_inc = inc_pivot_hz.copy()
+			orig_inc = orig_inc[key_cols + week_cols_hz]
+			# Ensure MPS Type exists
+			if "MPS Type" not in orig_inc.columns:
+				orig_inc.insert(1, "MPS Type", "POR")
+			# Simulated rows: set MPS Type label per PRD
+			action_label = f"Simulation {abs(signed_amount):.0f} {'cut' if signed_amount < 0 else 'add'} on {program_for_sim}"
+			sim_rows = sim_inc.copy()
+			if "MPS Type" in sim_rows.columns:
+				sim_rows["MPS Type"] = action_label
+			else:
+				sim_rows.insert(1, "MPS Type", action_label)
+			sim_rows = sim_rows[key_cols + week_cols_hz]
+
+			# Delta = Simulated - Original (positive=green, negative=red)
+			delta_rows = sim_rows.copy()
+			for wk in week_cols_hz:
+				delta_rows[wk] = sim_rows[wk].fillna(0.0) - orig_inc[wk].fillna(0.0)
+			delta_rows["MPS Type"] = "Δ (Sim - Orig)"
+
+			# Show tabs
+			st.markdown("**Original (Incremental, horizon)**")
+			render_aggrid(orig_inc, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in week_cols_hz}, is_delta=False, key="sim_orig")
+			st.divider()
+			st.markdown("**Simulated (Incremental, horizon)**")
+			render_aggrid(sim_rows, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in week_cols_hz}, is_delta=False, key="sim_sim")
+			st.divider()
+			st.markdown("**Delta (Simulated − Original)**")
+			render_aggrid(delta_rows, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in week_cols_hz}, is_delta=True, key="sim_delta")
+
+			# Exports per PRD: POR + Simulated together
+			export_df = build_simulation_export(orig_inc, sim_rows, week_cols_hz, mps_ver_latest, program_for_sim, action_label)
+			csv_sim = export_df.to_csv(index=False).encode("utf-8")
+			st.download_button("Export Simulation CSV", data=csv_sim, file_name="simulation_export.csv", mime="text/csv")
+			xlsx_sim = dataframe_to_excel_bytes(export_df, sheet_name="Simulation")
+			st.download_button("Export Simulation XLSX", data=xlsx_sim, file_name="simulation_export.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		except Exception as e:
+			st.exception(e)

@@ -5,3 +5,4 @@ openpyxl==3.1.5
 xlsxwriter==3.2.0
 streamlit-aggrid==0.3.4.post3
 python-dateutil==2.9.0.post0
+pyarrow==16.1.0
