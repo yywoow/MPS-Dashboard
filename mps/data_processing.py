@@ -413,12 +413,14 @@ def build_delta_table(
 		# Compute all week deltas at once to avoid fragmented writes
 		anch_cols = [f"{wk}_anch" for wk in week_cols]
 		comp_cols = [f"{wk}_comp" for wk in week_cols]
-		anch_vals = merged[anch_cols].fillna(0.0).to_numpy(copy=False)
-		comp_vals = merged[comp_cols].fillna(0.0).to_numpy(copy=False)
+		anch_vals = merged[anch_cols].fillna(0.0).values
+		comp_vals = merged[comp_cols].fillna(0.0).values
 		deltas = anch_vals - comp_vals
-		# Assign back in one go
-		for i, wk in enumerate(week_cols):
-			merged[wk] = deltas[:, i]
+		# Create delta columns using concat to avoid fragmentation
+		delta_df_cols = pd.DataFrame(deltas, columns=week_cols, index=merged.index)
+		# Remove the old suffixed columns and add delta columns
+		merged = merged.drop(columns=anch_cols + comp_cols)
+		merged = pd.concat([merged, delta_df_cols], axis=1)
 
 		# Set display version label to the comparison version display
 		ver_label = (

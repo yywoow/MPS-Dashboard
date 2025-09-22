@@ -553,80 +553,123 @@ with sim_tab:
 				sim_ready = False
 
 		# Simulation inputs (granularity selection)
-		with st.form("sim_form"):
-			c_top1, c_top2 = st.columns([1.4, 2.6])
-			with c_top1:
-				action = st.radio("Action", options=["Cut", "Add"], horizontal=True)
-				granularity = st.radio("Granularity", options=["Program", "Config 1", "Config 2", "Config 1 × Config 2"], index=0)
-			edited_allocs_pairs: Optional[pd.DataFrame] = None
-			edited_allocs_c1: Optional[pd.DataFrame] = None
-			edited_allocs_c2: Optional[pd.DataFrame] = None
-			with c_top2:
-				if granularity == "Program":
-					amount = st.number_input("Amount (Program total)", min_value=0.0, value=0.0, step=10.0, format="%.0f")
-				elif granularity == "Config 1":
-					# Build Config1-level table with Mix %
-					c1_togo = (
-						to_go_df.groupby(["Config 1"], as_index=False)["ToGo"].sum()
-					)
-					total_togo = float(c1_togo["ToGo"].sum())
-					c1_togo["Mix"] = c1_togo["ToGo"].map(lambda x: (x / total_togo) if total_togo > 0 else 0.0)
-					c1_togo["Mix %"] = c1_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
-					c1_togo["Requested"] = 0.0
-					st.markdown("Enter per-Config 1 Requested amounts. They will be split across Config 2 by that Config 1's to-go mix.")
-					ed_1 = st.data_editor(c1_togo[["Config 1", "ToGo", "Mix %", "Requested"]], key="sim_edit_c1")
-					# Merge back Requested into numeric frame
-					edited_allocs_c1 = c1_togo.copy()
-					if isinstance(ed_1, pd.DataFrame):
-						edited_allocs_c1["Requested"] = ed_1.get("Requested", edited_allocs_c1["Requested"]) 
-				elif granularity == "Config 2":
-					# Build Config2-level table with Mix %
-					c2_togo = (
-						to_go_df.groupby(["Config 2"], as_index=False)["ToGo"].sum()
-					)
-					total_togo2 = float(c2_togo["ToGo"].sum())
-					c2_togo["Mix"] = c2_togo["ToGo"].map(lambda x: (x / total_togo2) if total_togo2 > 0 else 0.0)
-					c2_togo["Mix %"] = c2_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
-					c2_togo["Requested"] = 0.0
-					st.markdown("Enter per-Config 2 Requested amounts. They will be split across Config 1 children by that Config 2's to-go mix.")
-					ed_2 = st.data_editor(c2_togo[["Config 2", "ToGo", "Mix %", "Requested"]], key="sim_edit_c2")
-					edited_allocs_c2 = c2_togo.copy()
-					if isinstance(ed_2, pd.DataFrame):
-						edited_allocs_c2["Requested"] = ed_2.get("Requested", edited_allocs_c2["Requested"]) 
-				else:
-					# Pair-level editor with Mix %
-					pairs_df = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
-					pairs_df["Mix %"] = pairs_df["Mix"].map(lambda x: f"{x*100:.2f}%")
-					pairs_df["Requested"] = 0.0
-					st.markdown("Enter per-bucket Requested values, then Apply Simulation.")
-					ed_12 = st.data_editor(pairs_df[["Config 1", "Config 2", "ToGo", "Mix %", "Requested"]], key="sim_edit_pairs")
-					edited_allocs_pairs = pairs_df.copy()
-					if isinstance(ed_12, pd.DataFrame):
-						edited_allocs_pairs["Requested"] = ed_12.get("Requested", edited_allocs_pairs["Requested"]) 
+		st.markdown("### Step 1: Select Program, Action & Granularity")
+		c_top1, c_top2, c_top3 = st.columns([1.2, 1.2, 1.6])
+		with c_top1:
+			action = st.radio("Action", options=["Cut", "Add"], horizontal=True)
+		with c_top2:
+			granularity = st.radio("Granularity", options=["Program", "Config 1", "Config 2", "Config 1 × Config 2"], index=0)
+		with c_top3:
+			refresh_clicked = st.button("🔄 Refresh Per-Bucket Values", type="secondary")
 
-			apply_sim = st.form_submit_button("Apply Simulation")
+		st.markdown("### Step 2: Enter Requested Quantities")
+		
+		# Initialize or refresh per-bucket data based on granularity selection
+		if refresh_clicked or f"sim_table_{granularity}" not in st.session_state:
+			if granularity == "Program":
+				# Single input for program level
+				program_data = pd.DataFrame({
+					"Program": [program_for_sim],
+					"ToGo": [to_go_df["ToGo"].sum()],
+					"Mix %": ["100.00%"],
+					"Requested": [0.0]
+				})
+				st.session_state[f"sim_table_{granularity}"] = program_data
+			elif granularity == "Config 1":
+				# Build Config1-level table with Mix %
+				c1_togo = to_go_df.groupby(["Config 1"], as_index=False)["ToGo"].sum()
+				total_togo = float(c1_togo["ToGo"].sum())
+				c1_togo["Mix"] = c1_togo["ToGo"].map(lambda x: (x / total_togo) if total_togo > 0 else 0.0)
+				c1_togo["Mix %"] = c1_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
+				c1_togo["Requested"] = 0.0
+				st.session_state[f"sim_table_{granularity}"] = c1_togo
+			elif granularity == "Config 2":
+				# Build Config2-level table with Mix %
+				c2_togo = to_go_df.groupby(["Config 2"], as_index=False)["ToGo"].sum()
+				total_togo2 = float(c2_togo["ToGo"].sum())
+				c2_togo["Mix"] = c2_togo["ToGo"].map(lambda x: (x / total_togo2) if total_togo2 > 0 else 0.0)
+				c2_togo["Mix %"] = c2_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
+				c2_togo["Requested"] = 0.0
+				st.session_state[f"sim_table_{granularity}"] = c2_togo
+			else:  # Config 1 × Config 2
+				# Pair-level editor with Mix %
+				pairs_df = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
+				pairs_df["Mix %"] = pairs_df["Mix"].map(lambda x: f"{x*100:.2f}%")
+				pairs_df["Requested"] = 0.0
+				st.session_state[f"sim_table_{granularity}"] = pairs_df
 
-		# Basic input guard for Program granularity
-		if sim_ready and 'granularity' in locals() and granularity == "Program" and amount <= 0:
-			st.info("Enter a positive amount for Program-level simulation.")
+		# Display the appropriate editor based on granularity
+		if granularity == "Program":
+			st.markdown("Enter total program amount:")
+			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
+			edited_data = st.data_editor(
+				current_data[["Program", "ToGo", "Mix %", "Requested"]], 
+				key=f"sim_edit_{granularity}",
+				width='stretch'
+			)
+		elif granularity == "Config 1":
+			st.markdown("Enter per-Config 1 amounts (will be split across Config 2 by to-go mix):")
+			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
+			edited_data = st.data_editor(
+				current_data[["Config 1", "ToGo", "Mix %", "Requested"]], 
+				key=f"sim_edit_{granularity}",
+				width='stretch'
+			)
+		elif granularity == "Config 2":
+			st.markdown("Enter per-Config 2 amounts (will be split across Config 1 by to-go mix):")
+			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
+			edited_data = st.data_editor(
+				current_data[["Config 2", "ToGo", "Mix %", "Requested"]], 
+				key=f"sim_edit_{granularity}",
+				width='stretch'
+			)
+		else:  # Config 1 × Config 2
+			st.markdown("Enter per-bucket amounts:")
+			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
+			edited_data = st.data_editor(
+				current_data[["Config 1", "Config 2", "ToGo", "Mix %", "Requested"]], 
+				key=f"sim_edit_{granularity}",
+				width='stretch'
+			)
+
+		st.markdown("### Step 3: Apply Simulation")
+		apply_sim = st.button("🚀 Apply Simulation", type="primary")
+
+		# Show current To-Go summary
+		if sim_ready and not apply_sim:
 			st.markdown("**Current To-Go (Program latest POR)**")
 			# Format ToGo with proper number formatting and Mix as percentage
 			display_togo = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
 			display_togo["Mix %"] = display_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
 			render_aggrid(display_togo[["Config 1", "Config 2", "ToGo", "Mix %"]], {**comp_week_quarter, **delta_week_quarter}, is_delta=False, key="sim_togo_table")
-			sim_ready = False
 
 		if sim_ready and apply_sim:
 			try:
-				# Build allocations based on granularity
+				# Validate that user has entered some requested values
+				if 'edited_data' not in locals() or edited_data is None or edited_data.empty:
+					st.error("Please refresh the per-bucket values first and enter requested quantities.")
+					st.stop()
+				
+				total_requested = float(edited_data.get("Requested", pd.Series(dtype=float)).sum())
+				if total_requested == 0:
+					st.warning("Please enter non-zero requested values in the table above.")
+					st.stop()
+				
+				# Build allocations based on granularity using edited data
 				allocations: Dict[Tuple[str, str], float] = {}
+				
 				if granularity == "Program":
-					signed_amount = -float(amount) if action == "Cut" else float(amount)
-					allocations = split_request_across_buckets(to_go_df, signed_amount, targeted=None)
-				elif granularity == "Config 1" and edited_allocs_c1 is not None:
+					# Use edited_data from the data_editor
+					for _, r in edited_data.iterrows():
+						req = float(r.get("Requested", 0.0))
+						if req > 0:
+							signed_amount = -req if action == "Cut" else req
+							allocations = split_request_across_buckets(to_go_df, signed_amount, targeted=None)
+							break
+				elif granularity == "Config 1":
 					# For each Config 1 row with Requested, split across its children by to-go mix
 					pairs_lookup = to_go_df.copy()
-					for _, r in edited_allocs_c1.iterrows():
+					for _, r in edited_data.iterrows():
 						req = float(r.get("Requested", 0.0))
 						if req == 0:
 							continue
@@ -639,17 +682,10 @@ with sim_tab:
 						for _, cr in children.iterrows():
 							pair_key = (str(cr.get("Config 1")), str(cr.get("Config 2")))
 							allocations[pair_key] = allocations.get(pair_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
-				elif granularity == "Config 1 × Config 2" and edited_allocs_pairs is not None:
-					for _, r in edited_allocs_pairs.iterrows():
-						val = float(r.get("Requested", 0.0))
-						if val == 0:
-							continue
-						key = (str(r.get("Config 1")), str(r.get("Config 2")))
-						allocations[key] = allocations.get(key, 0.0) + (-val if action == "Cut" else val)
-				elif granularity == "Config 2" and edited_allocs_c2 is not None:
+				elif granularity == "Config 2":
 					# For each Config 2 row with Requested, split across its Config 1 children by to-go mix
 					pairs_lookup2 = to_go_df.copy()
-					for _, r in edited_allocs_c2.iterrows():
+					for _, r in edited_data.iterrows():
 						req = float(r.get("Requested", 0.0))
 						if req == 0:
 							continue
@@ -662,6 +698,13 @@ with sim_tab:
 						for _, cr in children2.iterrows():
 							pair_key = (str(cr.get("Config 1")), str(cr.get("Config 2")))
 							allocations[pair_key] = allocations.get(pair_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum2
+				else:  # Config 1 × Config 2
+					for _, r in edited_data.iterrows():
+						val = float(r.get("Requested", 0.0))
+						if val == 0:
+							continue
+						key = (str(r.get("Config 1")), str(r.get("Config 2")))
+						allocations[key] = allocations.get(key, 0.0) + (-val if action == "Cut" else val)
 
 				# Pre-check for cuts: cannot exceed to-go
 				violations: List[Tuple[str, str, float, float]] = []
@@ -690,7 +733,31 @@ with sim_tab:
 				total_amount_applied = abs(sum(allocations.values()))
 				action_word = "cut" if sum(allocations.values()) < 0 else "add"
 				
-				action_label = f"Simulation {total_amount_applied:.0f} {action_word} on {program_for_sim}"
+				# Build descriptive action label based on granularity and affected configs
+				if granularity == "Program":
+					action_label = f"Simulation {total_amount_applied:.0f} {action_word} on {program_for_sim}"
+				else:
+					# For config-level simulations, identify which configs were affected
+					affected_configs = []
+					for _, r in edited_data.iterrows():
+						req = float(r.get("Requested", 0.0))
+						if req > 0:
+							if granularity == "Config 1":
+								config_name = str(r.get("Config 1", ""))
+								affected_configs.append(config_name)
+							elif granularity == "Config 2":
+								config_name = str(r.get("Config 2", ""))
+								affected_configs.append(config_name)
+							else:  # Config 1 × Config 2
+								config1 = str(r.get("Config 1", ""))
+								config2 = str(r.get("Config 2", ""))
+								affected_configs.append(f"{config1}, {config2}")
+					
+					if affected_configs:
+						configs_str = ", ".join(affected_configs)
+						action_label = f"Simulation {total_amount_applied:.0f} {action_word} on {configs_str} on {program_for_sim}"
+					else:
+						action_label = f"Simulation {total_amount_applied:.0f} {action_word} on {program_for_sim}"
 				sim_rows = sim_inc.copy()
 				if "MPS Type" in sim_rows.columns:
 					sim_rows["MPS Type"] = action_label
