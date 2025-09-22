@@ -178,6 +178,7 @@ def _pivot_display(
 	df: pd.DataFrame,
 	metric: str,
 	mapping: pd.DataFrame,
+	include_config_percent: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
 	"""Pivot long df to wide for display; returns df and mapping of week column -> quarter."""
 	if metric not in ("Incremental", "Cumulative"):
@@ -212,6 +213,29 @@ def _pivot_display(
 	pivot["_ver_order"] = pivot["Ver_Wk_Code"].map({v: i for i, v in enumerate(version_order)})
 	pivot = pivot.sort_values(["_ver_order", "MPS Type", "Program", "Config 1", "Config 2"]).drop(columns=["_ver_order"])
 
+	# Add config percentage column if requested (for consistency with simulation tables)
+	if include_config_percent:
+		# Calculate total per Program+Version for percentage calculation
+		total_by_program_ver = pivot.groupby(["Ver_Wk_Code", "Program"])[ordered_weeks].sum()
+		
+		# Add Config % column showing percentage of total for each config combination
+		config_percents = []
+		for _, row in pivot.iterrows():
+			ver_label = row["Ver_Wk_Code"]
+			program = row["Program"]
+			row_total = row[ordered_weeks].sum()
+			
+			if ver_label in total_by_program_ver.index.get_level_values(0) and program in total_by_program_ver.loc[ver_label].index:
+				program_total = total_by_program_ver.loc[(ver_label, program), ordered_weeks].sum()
+				config_pct = (row_total / program_total * 100) if program_total > 0 else 0.0
+				config_percents.append(f"{config_pct:.2f}%")
+			else:
+				config_percents.append("0.00%")
+		
+		# Insert Config % column after Config 2
+		config2_idx = pivot.columns.get_loc("Config 2") + 1
+		pivot.insert(config2_idx, "Config %", config_percents)
+
 	# Quarter banding metadata
 	week_to_quarter = (
 		mapping.drop_duplicates(subset=[M.wk_code]).set_index(M.wk_code)[M.quarter].to_dict()
@@ -244,7 +268,7 @@ def build_inc_pivot_for_horizon(long_df: pd.DataFrame, mapping: pd.DataFrame, pr
     """Return incremental pivot for a program+version limited to weeks on/after the version date (horizon)."""
     sub = long_df[(long_df["Program"] == program) & (long_df["MPS Ver"] == version)].copy()
     sub = _aggregate_for_ttl(sub, ttl_config1, ttl_config2)
-    pivot, _ = _pivot_display(sub, "Incremental", mapping)
+    pivot, _ = _pivot_display(sub, "Incremental", mapping, include_config_percent=False)
     # Filter to horizon weeks
     wk_to_date = mapping.drop_duplicates(subset=[M.wk_code]).set_index(M.wk_code)[M.date_code].to_dict()
     key_cols = [c for c in ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2"] if c in pivot.columns]
@@ -315,33 +339,24 @@ def lifo_apply_allocation(inc_pivot: pd.DataFrame, week_cols: List[str], allocat
 
 
 def build_simulation_export(original_inc: pd.DataFrame, simulated_inc: pd.DataFrame, week_cols: List[str], mps_ver: str, program: str, action_label: str) -> pd.DataFrame:
-    """Return export df with schema: Program, Config 1, Config 2, MPS Ver, MPS Type, weeks.
+    """Return ONLY the simulated rows for export per PRD v1.9.
 
-    Simulated rows appended with MPS Type label like "Simulation <X> cut on <Program>".
+    Schema: Program, Config 1, Config 2, MPS Ver, MPS Type, weeks.
+    MPS Type label like "Simulation <X> cut|add on <Program>".
+    Export format matches input schema exactly per PRD Section 5.6.
     """
-    # Original POR rows (take from original_inc, keep only POR rows if present)
-    meta_cols = [c for c in ["Program", "Config 1", "Config 2"] if c in original_inc.columns]
-    por_type_col = "MPS Type" if "MPS Type" in original_inc.columns else None
-    por_rows = original_inc.copy()
-    if por_type_col:
-        # keep POR only for original
-        por_rows = por_rows[por_rows[por_type_col] == "POR"] if (por_type_col in por_rows.columns) else por_rows
-    por_rows = por_rows.rename(columns={})
-    por_rows_out = por_rows[meta_cols].copy()
-    por_rows_out["MPS Ver"] = mps_ver
-    por_rows_out["MPS Type"] = "POR"
-    for wk in week_cols:
-        por_rows_out[wk] = por_rows[wk].values if wk in por_rows.columns else 0.0
-
-    # Simulated rows
+    meta_cols = [c for c in ["Program", "Config 1", "Config 2"] if c in simulated_inc.columns]
     sim_rows_out = simulated_inc[meta_cols].copy()
     sim_rows_out["MPS Ver"] = mps_ver
     sim_rows_out["MPS Type"] = action_label
+    
+    # Add weekly columns in original order to match input schema
     for wk in week_cols:
         sim_rows_out[wk] = simulated_inc[wk].values if wk in simulated_inc.columns else 0.0
-
-    export_df = pd.concat([por_rows_out, sim_rows_out], ignore_index=True)
-    return export_df
+    
+    # Ensure export columns match PRD specification exactly: Program, Config 1, Config 2, MPS Ver, MPS Type, then weeks
+    export_cols = ["Program", "Config 1", "Config 2", "MPS Ver", "MPS Type"] + week_cols
+    return sim_rows_out[export_cols]
 
 
 def build_comparison_table(
@@ -351,11 +366,12 @@ def build_comparison_table(
 	selected_versions: Sequence[str],
 	ttl_config1: bool,
 	ttl_config2: bool,
+	include_config_percent: bool = True,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
 	"""Create display table for comparison view including only selected versions."""
 	subset = long_df[long_df["MPS Ver"].isin(selected_versions)].copy()
 	subset = _aggregate_for_ttl(subset, ttl_config1, ttl_config2)
-	return _pivot_display(subset, metric, mapping)
+	return _pivot_display(subset, metric, mapping, include_config_percent)
 
 
 def build_delta_table(
@@ -373,13 +389,13 @@ def build_delta_table(
 	"""
 	anchor_df = long_df[long_df["MPS Ver"] == anchor_version].copy()
 	anchor_df = _aggregate_for_ttl(anchor_df, ttl_config1, ttl_config2)
-	anchor_pivot, _ = _pivot_display(anchor_df, metric, mapping)
+	anchor_pivot, _ = _pivot_display(anchor_df, metric, mapping, include_config_percent=False)
 
 	all_delta_rows: List[pd.DataFrame] = []
 	for ver in comparison_versions:
 		comp_df = long_df[long_df["MPS Ver"] == ver].copy()
 		comp_df = _aggregate_for_ttl(comp_df, ttl_config1, ttl_config2)
-		comp_pivot, _ = _pivot_display(comp_df, metric, mapping)
+		comp_pivot, _ = _pivot_display(comp_df, metric, mapping, include_config_percent=False)
 
 		# Align on Program/Config rows
 		join_keys = ["Program", "Config 1", "Config 2"]
