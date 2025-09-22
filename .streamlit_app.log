@@ -1,0 +1,58 @@
+
+  You can now view your Streamlit app in your browser.
+
+  Local URL: http://localhost:8501
+  Network URL: http://192.168.1.170:8501
+  External URL: http://73.202.227.253:8501
+
+  For better performance, install the Watchdog module:
+
+  $ xcode-select --install
+  $ pip install watchdog
+            
+2025-09-22 15:57:00.563 Uncaught app exception
+Traceback (most recent call last):
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/.venv/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 85, in exec_func_with_error_handling
+    result = func()
+             ^^^^^^
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/.venv/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 576, in code_to_exec
+    exec(code, module.__dict__)
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/app.py", line 7, in <module>
+    from mps import (
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/mps/__init__.py", line 9, in <module>
+    from .data_processing import (
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/mps/data_processing.py", line 105
+    mps_df = mps_df.copy()
+                          ^
+IndentationError: unindent does not match any outer indentation level
+2025-09-22 15:57:00.564 Uncaught app exception
+Traceback (most recent call last):
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/.venv/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 85, in exec_func_with_error_handling
+    result = func()
+             ^^^^^^
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/.venv/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 576, in code_to_exec
+    exec(code, module.__dict__)
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/app.py", line 7, in <module>
+    from mps import (
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/mps/__init__.py", line 9, in <module>
+    from .data_processing import (
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/mps/data_processing.py", line 105
+    mps_df = mps_df.copy()
+                          ^
+IndentationError: unindent does not match any outer indentation level
+2025-09-22 15:57:09.858 Uncaught app exception
+Traceback (most recent call last):
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/.venv/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/exec_code.py", line 85, in exec_func_with_error_handling
+    result = func()
+             ^^^^^^
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/.venv/lib/python3.11/site-packages/streamlit/runtime/scriptrunner/script_runner.py", line 576, in code_to_exec
+    exec(code, module.__dict__)
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/app.py", line 7, in <module>
+    from mps import (
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/mps/__init__.py", line 9, in <module>
+    from .data_processing import (
+  File "/Users/chevywang/Documents/GitHub/MPS-Dashboard/mps/data_processing.py", line 105
+    mps_df = mps_df.copy()
+                          ^
+IndentationError: unindent does not match any outer indentation level
+  Stopping...

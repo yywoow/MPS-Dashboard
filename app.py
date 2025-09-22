@@ -22,9 +22,12 @@ from mps.data_processing import (
 )
 
 try:
-	from st_aggrid import AgGrid
+	from st_aggrid import AgGrid, JsCode
+	AGGRID_AVAILABLE = True
 except Exception:  # pragma: no cover
 	AgGrid = None  # type: ignore
+	JsCode = None  # type: ignore
+	AGGRID_AVAILABLE = False
 
 
 st.set_page_config(page_title="MPS Dashboard", layout="wide")
@@ -225,10 +228,21 @@ with col_btn2:
 with col_btn3:
 	st.write("")
 
+# Show current applied filters for debugging
+with st.expander("🔍 Current Applied Filters (Debug)", expanded=False):
+	st.write(f"**Programs:** {st.session_state['applied_programs']}")
+	st.write(f"**Config 1:** {st.session_state['applied_config1']}")
+	st.write(f"**Config 2:** {st.session_state['applied_config2']}")
+	st.write(f"**Metric:** {st.session_state['applied_metric']}")
+	st.write(f"**Anchor:** {st.session_state['applied_anchor']}")
+	st.write(f"**Comparisons:** {st.session_state['applied_comparisons']}")
+	st.write(f"**TTL Config1:** {st.session_state['applied_ttl1']}")
+	st.write(f"**TTL Config2:** {st.session_state['applied_ttl2']}")
+
 if apply_clicked:
-	st.session_state["applied_programs"] = ui_programs or program_options
-	st.session_state["applied_config1"] = ui_config1 or config1_options
-	st.session_state["applied_config2"] = ui_config2 or config2_options
+	st.session_state["applied_programs"] = ui_programs
+	st.session_state["applied_config1"] = ui_config1
+	st.session_state["applied_config2"] = ui_config2
 	st.session_state["applied_metric"] = ui_metric
 	st.session_state["applied_anchor"] = ui_anchor
 	st.session_state["applied_comparisons"] = [v for v in ui_comparisons if v != ui_anchor]
@@ -246,6 +260,20 @@ try:
 		config2=st.session_state["applied_config2"],
 		metric=st.session_state["applied_metric"],
 	)
+
+	# Safety: enforce post-process filter once more in case any join/sort reintroduced rows
+	if not long_df.empty:
+		_prog = [str(p).strip() for p in st.session_state["applied_programs"]]
+		_c1 = [str(c).strip() for c in st.session_state["applied_config1"]]
+		_c2 = [str(c).strip() for c in st.session_state["applied_config2"]]
+		long_df = long_df[
+			long_df["Program"].astype(str).str.strip().isin(_prog)
+			& long_df["Config 1"].astype(str).str.strip().isin(_c1)
+			& long_df["Config 2"].astype(str).str.strip().isin(_c2)
+		]
+	
+
+		
 except Exception as e:
 	st.exception(e)
 	st.stop()
@@ -253,12 +281,14 @@ except Exception as e:
 # If filtering removes all rows, show empty-state and stop before building tables
 if long_df.empty:
     st.warning("No data after applying filters. Adjust filters to see results.")
+    st.info(f"Applied filters: Programs={len(st.session_state['applied_programs'])}, Config1={len(st.session_state['applied_config1'])}, Config2={len(st.session_state['applied_config2'])}, Metric={st.session_state['applied_metric']}")
     st.stop()
 
 # Constrain versions to those present after filtering
 versions_in_filtered = (
 	long_df.drop_duplicates(subset=["MPS Ver", "Ver_Date"]).sort_values("Ver_Date", ascending=False)["MPS Ver"].tolist()
 )
+
 if not versions_in_filtered:
 	st.warning("No versions available after filters.")
 	st.stop()
@@ -276,6 +306,7 @@ comp_df, comp_week_quarter = build_comparison_table(
 	selected_versions=[anchor_version, *comparison_versions],
 	ttl_config1=ttl_config1,
 	ttl_config2=ttl_config2,
+	include_config_percent=False,
 )
 
 delta_df, delta_week_quarter = build_delta_table(
@@ -318,25 +349,21 @@ def build_quarter_grouped_column_defs(df: pd.DataFrame, week_quarter: Dict[str, 
 				col_def["type"] = "rightAligned"
 			col_defs.append(col_def)
 
-	# Style function for delta colors
+	# Simplified approach - use pre-formatted data with color indicators instead of JavaScript
 	cell_style_js = None
-	if colorize_delta:
-		cell_style_js = {
-			"function": "params => { const v = Number(params.value); if (isNaN(v)) return {}; if (v > 0) return {color: '#1a7f37'}; if (v < 0) return {color: '#d32f2f'}; return {}; }"
-		}
 
 	# Alternating quarter header classes
 	for i, q in enumerate(quarter_order):
 		children = []
 		for wk in quarter_to_weeks[q]:
-			children.append({
+			col_def = {
 				"field": wk,
 				"headerName": wk,
 				"type": "rightAligned",
-				"valueFormatter": "(p.value===undefined||p.value===null)?'':new Intl.NumberFormat().format(p.value)",
-				"cellStyle": cell_style_js,
 				"minWidth": 110,
-			})
+			}
+			# Simplified approach - use pre-formatted data instead of JavaScript formatters
+			children.append(col_def)
 		col_defs.append({
 			"headerName": q,
 			"headerClass": "quarter-even" if i % 2 == 0 else "quarter-odd",
@@ -346,10 +373,20 @@ def build_quarter_grouped_column_defs(df: pd.DataFrame, week_quarter: Dict[str, 
 
 
 def render_aggrid(df: pd.DataFrame, week_quarter: Dict[str, str], is_delta: bool, key: str):
-	if AgGrid is None:
-		st.dataframe(df, width='stretch')
+	# Always format numbers for better display, regardless of AgGrid availability
+	formatted_df = df.copy()
+	key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config %"]
+	week_cols = [c for c in formatted_df.columns if c not in key_cols]
+	for col in week_cols:
+		if col in formatted_df.columns:
+			formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+	
+	if not AGGRID_AVAILABLE:
+		st.dataframe(formatted_df, use_container_width=True)
 		return
-	col_defs = build_quarter_grouped_column_defs(df, week_quarter, colorize_delta=is_delta)
+	
+	# Use the formatted dataframe with AgGrid for consistent number display
+	col_defs = build_quarter_grouped_column_defs(formatted_df, week_quarter, colorize_delta=is_delta)
 	grid_options = {
 		"defaultColDef": {
 			"resizable": True,
@@ -372,11 +409,10 @@ def render_aggrid(df: pd.DataFrame, week_quarter: Dict[str, str], is_delta: bool
 		unsafe_allow_html=True,
 	)
 	AgGrid(
-		df,
+		formatted_df,
 		gridOptions=grid_options,
-		height=min(72 + 28 * max(len(df), 8), 700),
+		height=min(72 + 28 * max(len(formatted_df), 8), 700),
 		fit_columns_on_grid_load=False,
-		allow_unsafe_jscode=True,
 		key=key,
 	)
 
@@ -388,12 +424,20 @@ def render_aggrid_grouped(
 	is_delta: bool,
 	key: str,
 ):
-	if AgGrid is None:
-		st.dataframe(df, width='stretch')
+	# Always format numbers for better display
+	formatted_df = df.copy()
+	key_cols = group_cols + ["Measurement"]
+	week_cols = [c for c in formatted_df.columns if c not in key_cols]
+	for col in week_cols:
+		if col in formatted_df.columns:
+			formatted_df[col] = formatted_df[col].apply(lambda x: f"{x:,.0f}" if pd.notna(x) and isinstance(x, (int, float)) else x)
+	
+	if not AGGRID_AVAILABLE:
+		st.dataframe(formatted_df, use_container_width=True)
 		return
 
 	# Build column defs with row grouping on requested columns, keep Measurement visible and pinned
-	week_cols = [c for c in df.columns if c not in (group_cols + ["Measurement"]) ]
+	week_cols = [c for c in formatted_df.columns if c not in (group_cols + ["Measurement"]) ]
 	quarter_order: List[str] = []
 	for wk in week_cols:
 		q = week_quarter.get(wk, "?")
@@ -420,23 +464,19 @@ def render_aggrid_grouped(
 		"filter": True,
 	})
 
+	# Simplified approach - no JavaScript styling
 	cell_style_js = None
-	if is_delta:
-		cell_style_js = {
-			"function": "params => { const v = Number(params.value); if (isNaN(v)) return {}; if (v > 0) return {color: '#1a7f37'}; if (v < 0) return {color: '#d32f2f'}; return {}; }"
-		}
 
 	for i, q in enumerate(quarter_order):
 		children = []
 		for wk in quarter_to_weeks[q]:
-			children.append({
+			col_def = {
 				"field": wk,
 				"headerName": wk,
 				"type": "rightAligned",
-				"valueFormatter": "(p.value===undefined||p.value===null)?'':new Intl.NumberFormat().format(p.value)",
-				"cellStyle": cell_style_js,
 				"minWidth": 110,
-			})
+			}
+			children.append(col_def)
 		col_defs.append({
 			"headerName": q,
 			"headerClass": "quarter-even" if i % 2 == 0 else "quarter-odd",
@@ -471,20 +511,19 @@ def render_aggrid_grouped(
 		unsafe_allow_html=True,
 	)
 	AgGrid(
-		df,
+		formatted_df,
 		gridOptions=grid_options,
-		height=min(72 + 28 * max(len(df), 8), 700),
+		height=min(72 + 28 * max(len(formatted_df), 8), 700),
 		fit_columns_on_grid_load=False,
-		allow_unsafe_jscode=True,
 		key=key,
 	)
 
 # --- Tabs with exports ---
-comp_tab, delta_tab, sim_tab = st.tabs(["Comparison Table", "Delta Table", "Simulation"])
+comp_tab, sim_tab = st.tabs(["Comparison Table", "Simulation"])
 
 
 with comp_tab:
-	st.caption("Anchor table (top) and Comparisons (bottom). Left columns are frozen.")
+	st.caption("Anchor table (top), Comparisons (middle), and Delta analysis (bottom). Left columns are frozen.")
 	# Split comp_df into anchor-only and comparison-only
 	anchor_label = (
 		long_df.loc[long_df["MPS Ver"] == anchor_version, "Ver_Wk_Code"].dropna().unique()
@@ -498,35 +537,59 @@ with comp_tab:
 	st.divider()
 	st.markdown("**Comparisons**")
 	render_aggrid(comparisons_only, comp_week_quarter, is_delta=False, key="comp_comparisons")
-	# Exports
-	# Exports
-	csv_anchor = anchor_only.to_csv(index=False).encode("utf-8")
-	st.download_button("Export Anchor CSV", data=csv_anchor, file_name="anchor.csv", mime="text/csv")
-	xlsx_anchor = dataframe_to_excel_bytes(anchor_only, sheet_name="Anchor")
-	st.download_button("Export Anchor XLSX", data=xlsx_anchor, file_name="anchor.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-	csv_comp = comparisons_only.to_csv(index=False).encode("utf-8")
-	st.download_button("Export Comparisons CSV", data=csv_comp, file_name="comparisons.csv", mime="text/csv")
-	xlsx_comp = dataframe_to_excel_bytes(comparisons_only, sheet_name="Comparisons")
-	st.download_button("Export Comparisons XLSX", data=xlsx_comp, file_name="comparisons.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-with delta_tab:
+	
+	# Add Delta section at the bottom
+	st.divider()
+	st.markdown("**Delta Analysis**")
 	st.caption("Rows = each Comparison vs Anchor (Anchor − Comparison). Green=positive, Red=negative")
 	render_aggrid(delta_df, delta_week_quarter, is_delta=True, key="delta")
-	# Exports
-	csv_d = delta_df.to_csv(index=False).encode("utf-8")
-	st.download_button("Export Delta CSV", data=csv_d, file_name="delta.csv", mime="text/csv")
-	xlsx_d = dataframe_to_excel_bytes(delta_df, sheet_name="Delta")
-	st.download_button("Export Delta XLSX", data=xlsx_d, file_name="delta.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	
+	# Exports section
+	st.markdown("**Export Options**")
+	col1, col2, col3 = st.columns(3)
+	
+	with col1:
+		st.markdown("*Anchor Exports*")
+		csv_anchor = anchor_only.to_csv(index=False).encode("utf-8")
+		st.download_button("Export Anchor CSV", data=csv_anchor, file_name="anchor.csv", mime="text/csv")
+		xlsx_anchor = dataframe_to_excel_bytes(anchor_only, sheet_name="Anchor")
+		st.download_button("Export Anchor XLSX", data=xlsx_anchor, file_name="anchor.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	
+	with col2:
+		st.markdown("*Comparison Exports*")
+		csv_comp = comparisons_only.to_csv(index=False).encode("utf-8")
+		st.download_button("Export Comparisons CSV", data=csv_comp, file_name="comparisons.csv", mime="text/csv")
+		xlsx_comp = dataframe_to_excel_bytes(comparisons_only, sheet_name="Comparisons")
+		st.download_button("Export Comparisons XLSX", data=xlsx_comp, file_name="comparisons.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	
+	with col3:
+		st.markdown("*Delta Exports*")
+		csv_d = delta_df.to_csv(index=False).encode("utf-8")
+		st.download_button("Export Delta CSV", data=csv_d, file_name="delta.csv", mime="text/csv")
+		xlsx_d = dataframe_to_excel_bytes(delta_df, sheet_name="Delta")
+		st.download_button("Export Delta XLSX", data=xlsx_d, file_name="delta.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 with sim_tab:
 	try:
 		st.caption("Simulate cut/add on the latest POR for a selected Program. Applies to weeks ≥ that version's date (LIFO).")
 
-		# Choose program (single) limited to applied programs
+		# Simulation inputs (granularity selection)
+		st.markdown("### Step 1: Select Program, Action & Granularity")
+		
+		# Program selection first
+		st.markdown("**Program for Simulation**")
 		sim_program_options = st.session_state.get("applied_programs", program_options)
 		prog_default = sim_program_options[0] if sim_program_options else (program_options[0] if program_options else "")
-		program_for_sim = st.selectbox("Program for Simulation", options=sim_program_options, index=(sim_program_options.index(prog_default) if prog_default in sim_program_options else 0))
+		program_for_sim = st.selectbox("Select Program", options=sim_program_options, index=(sim_program_options.index(prog_default) if prog_default in sim_program_options else 0), label_visibility="collapsed")
+		
+		# Action and Granularity in columns
+		c_top1, c_top2, c_top3 = st.columns([1.2, 1.2, 1.6])
+		with c_top1:
+			action = st.radio("Action", options=["Cut", "Add"], horizontal=True)
+		with c_top2:
+			granularity = st.radio("Granularity", options=["Program", "Config 1", "Config 2", "Config 1 × Config 2"], index=0)
+		with c_top3:
+			refresh_clicked = st.button("🔄 Refresh Per-Bucket Values", type="secondary")
 
 		# Find latest version (prefer POR) for program
 		latest_meta = get_latest_version_for_program(long_df, program_for_sim, prefer_type="POR")
@@ -548,19 +611,10 @@ with sim_tab:
 				st.markdown("**Current To-Go (Program latest POR)**")
 				# Format ToGo with proper number formatting and Mix as percentage
 				display_togo = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
+				display_togo["ToGo"] = display_togo["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
 				display_togo["Mix %"] = display_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
-				render_aggrid(display_togo[["Config 1", "Config 2", "ToGo", "Mix %"]], {**comp_week_quarter, **delta_week_quarter}, is_delta=False, key="sim_togo_nowks")
+				st.dataframe(display_togo[["Config 1", "Config 2", "ToGo", "Mix %"]], use_container_width=True)
 				sim_ready = False
-
-		# Simulation inputs (granularity selection)
-		st.markdown("### Step 1: Select Program, Action & Granularity")
-		c_top1, c_top2, c_top3 = st.columns([1.2, 1.2, 1.6])
-		with c_top1:
-			action = st.radio("Action", options=["Cut", "Add"], horizontal=True)
-		with c_top2:
-			granularity = st.radio("Granularity", options=["Program", "Config 1", "Config 2", "Config 1 × Config 2"], index=0)
-		with c_top3:
-			refresh_clicked = st.button("🔄 Refresh Per-Bucket Values", type="secondary")
 
 		st.markdown("### Step 2: Enter Requested Quantities")
 		
@@ -602,34 +656,70 @@ with sim_tab:
 		if granularity == "Program":
 			st.markdown("Enter total program amount:")
 			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
-			edited_data = st.data_editor(
-				current_data[["Program", "ToGo", "Mix %", "Requested"]], 
+			# Format numbers with thousand separators
+			display_data = current_data.copy()
+			if not display_data.empty:
+				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+				edited_data = st.data_editor(
+				display_data[["Program", "ToGo", "Mix %", "Requested"]], 
 				key=f"sim_edit_{granularity}",
-				width='stretch'
+					use_container_width=True,
+				column_config={
+					"ToGo": st.column_config.TextColumn("ToGo", disabled=True),
+					"Mix %": st.column_config.TextColumn("Mix %", disabled=True),
+					"Requested": st.column_config.NumberColumn("Requested", format="%.0f")
+				}
 			)
 		elif granularity == "Config 1":
 			st.markdown("Enter per-Config 1 amounts (will be split across Config 2 by to-go mix):")
 			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
-			edited_data = st.data_editor(
-				current_data[["Config 1", "ToGo", "Mix %", "Requested"]], 
+			# Format numbers with thousand separators
+			display_data = current_data.copy()
+			if not display_data.empty:
+				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+				edited_data = st.data_editor(
+				display_data[["Config 1", "ToGo", "Mix %", "Requested"]], 
 				key=f"sim_edit_{granularity}",
-				width='stretch'
+					use_container_width=True,
+				column_config={
+					"ToGo": st.column_config.TextColumn("ToGo", disabled=True),
+					"Mix %": st.column_config.TextColumn("Mix %", disabled=True),
+					"Requested": st.column_config.NumberColumn("Requested", format="%.0f")
+				}
 			)
 		elif granularity == "Config 2":
 			st.markdown("Enter per-Config 2 amounts (will be split across Config 1 by to-go mix):")
 			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
-			edited_data = st.data_editor(
-				current_data[["Config 2", "ToGo", "Mix %", "Requested"]], 
+			# Format numbers with thousand separators
+			display_data = current_data.copy()
+			if not display_data.empty:
+				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+				edited_data = st.data_editor(
+				display_data[["Config 2", "ToGo", "Mix %", "Requested"]], 
 				key=f"sim_edit_{granularity}",
-				width='stretch'
+					use_container_width=True,
+				column_config={
+					"ToGo": st.column_config.TextColumn("ToGo", disabled=True),
+					"Mix %": st.column_config.TextColumn("Mix %", disabled=True),
+					"Requested": st.column_config.NumberColumn("Requested", format="%.0f")
+				}
 			)
 		else:  # Config 1 × Config 2
 			st.markdown("Enter per-bucket amounts:")
 			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
-			edited_data = st.data_editor(
-				current_data[["Config 1", "Config 2", "ToGo", "Mix %", "Requested"]], 
+			# Format numbers with thousand separators
+			display_data = current_data.copy()
+			if not display_data.empty:
+				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+				edited_data = st.data_editor(
+				display_data[["Config 1", "Config 2", "ToGo", "Mix %", "Requested"]], 
 				key=f"sim_edit_{granularity}",
-				width='stretch'
+					use_container_width=True,
+				column_config={
+					"ToGo": st.column_config.TextColumn("ToGo", disabled=True),
+					"Mix %": st.column_config.TextColumn("Mix %", disabled=True),
+					"Requested": st.column_config.NumberColumn("Requested", format="%.0f")
+				}
 			)
 
 		st.markdown("### Step 3: Apply Simulation")
@@ -640,8 +730,9 @@ with sim_tab:
 			st.markdown("**Current To-Go (Program latest POR)**")
 			# Format ToGo with proper number formatting and Mix as percentage
 			display_togo = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
+			display_togo["ToGo"] = display_togo["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
 			display_togo["Mix %"] = display_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
-			render_aggrid(display_togo[["Config 1", "Config 2", "ToGo", "Mix %"]], {**comp_week_quarter, **delta_week_quarter}, is_delta=False, key="sim_togo_table")
+			st.dataframe(display_togo[["Config 1", "Config 2", "ToGo", "Mix %"]], use_container_width=True)
 
 		if sim_ready and apply_sim:
 			try:
@@ -718,7 +809,7 @@ with sim_tab:
 				if violations:
 					st.error("Simulation can’t be applied: requested cut exceeds remaining to-go.")
 					viol_df = pd.DataFrame(violations, columns=["Config 1", "Config 2", "Requested", "Available"])
-					st.dataframe(viol_df, width='stretch')
+					st.dataframe(viol_df, use_container_width=True)
 					st.stop()
 
 				sim_inc = lifo_apply_allocation(inc_pivot_hz, week_cols_hz, allocations)

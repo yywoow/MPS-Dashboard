@@ -100,6 +100,16 @@ def prepare_long_data(
 		mps_df = mps_df.copy()
 		mps_df["MPS Type"] = "POR"
 
+	# Normalize identifier columns to string (trim whitespace) to make filtering robust
+	# This prevents mismatches like "B604 " vs "B604" and ensures .isin() works predictably
+	mps_df = mps_df.copy()
+	for col in required_id_cols:
+		try:
+			mps_df[col] = mps_df[col].astype(str).str.strip()
+		except Exception:
+			# Best-effort: if casting fails for any reason, keep original values
+			pass
+
 	# Identify weekly columns by Fymw presence in mapping
 	week_cols = [c for c in mps_df.columns if c in set(mapping[M.fymw].unique())]
 	if not week_cols:
@@ -145,12 +155,16 @@ def prepare_long_data(
 	)
 
 	# Optional filters (pre-aggregation)
-	if programs:
-		long_df = long_df[long_df["Program"].isin(programs)]
-	if config1:
-		long_df = long_df[long_df["Config 1"].isin(config1)]
-	if config2:
-		long_df = long_df[long_df["Config 2"].isin(config2)]
+	if programs is not None and len(programs) > 0:
+		# Ensure comparison is on normalized strings
+		_programs_norm = [str(p).strip() for p in programs]
+		long_df = long_df[long_df["Program"].astype(str).str.strip().isin(_programs_norm)]
+	if config1 is not None and len(config1) > 0:
+		_c1_norm = [str(c).strip() for c in config1]
+		long_df = long_df[long_df["Config 1"].astype(str).str.strip().isin(_c1_norm)]
+	if config2 is not None and len(config2) > 0:
+		_c2_norm = [str(c).strip() for c in config2]
+		long_df = long_df[long_df["Config 2"].astype(str).str.strip().isin(_c2_norm)]
 
 	version_label_map = (
 		long_df.drop_duplicates(subset=["MPS Ver"])  # each version
