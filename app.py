@@ -1,6 +1,7 @@
 import streamlit as st
 from pathlib import Path
 import pandas as pd
+import inspect
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 
@@ -44,6 +45,17 @@ def get_mapping() -> pd.DataFrame:
 	return load_mapping(BASE_DIR)
 
 mapping = get_mapping()
+
+# --- Compatibility helper: call prepare_long_data with only supported kwargs ---
+def _safe_prepare_long_data(mps_df: pd.DataFrame, mapping: pd.DataFrame, **kwargs):
+	try:
+		sig = inspect.signature(prepare_long_data)
+		allowed = set(sig.parameters.keys())
+		filtered = {k: v for k, v in kwargs.items() if k in allowed}
+		return prepare_long_data(mps_df=mps_df, mapping=mapping, **filtered)
+	except Exception:
+		# Fallback to original call to surface meaningful errors
+		return prepare_long_data(mps_df=mps_df, mapping=mapping, **kwargs)
 
 # --- File input (with optional sample loader) ---
 col_u1, col_u2 = st.columns([4, 1])
@@ -128,8 +140,9 @@ if "applied_metric" not in st.session_state:
 	st.session_state["applied_metric"] = "Incremental"
 
 # Preview versions based on applied filters
+
 try:
-	_preview_long, _ = prepare_long_data(
+	_preview_long, _ = _safe_prepare_long_data(
 		mps_df=mps_df,
 		mapping=mapping,
 		programs=st.session_state["applied_programs"],
@@ -309,7 +322,7 @@ if apply_clicked:
 # --- Prepare long data (using applied state) ---
 
 try:
-	long_df, ver_label_map_from_long = prepare_long_data(
+	long_df, ver_label_map_from_long = _safe_prepare_long_data(
 		mps_df=mps_df,
 		mapping=mapping,
 		programs=st.session_state["applied_programs"],
