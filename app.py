@@ -51,7 +51,7 @@ with col_u1:
 	uploaded_file = st.file_uploader("Upload MPS Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
 with col_u2:
 	use_sample = False
-	if Path(BASE_DIR, "MPS Example.xlsx").exists():
+	if Path(BASE_DIR, "MPS Example(0923).xlsx").exists():
 		use_sample = st.checkbox("Use sample", key="use_sample", value=st.session_state.get("use_sample", False))
 
 # If a file is uploaded, ignore sample mode for this run (avoid mutating widget state)
@@ -67,12 +67,12 @@ if uploaded_file is None and not use_sample:
 	st.info("Drag-and-drop your MPS Excel file or click 'Use sample' if available.")
 	st.stop()
 elif use_sample:
-	mps_df = read_mps_excel(Path(BASE_DIR, "MPS Example.xlsx"))
+	mps_df = read_mps_excel(Path(BASE_DIR, "MPS Example(0923).xlsx"))
 else:
 	mps_df = read_mps_excel(uploaded_file)
 
 # Validate core columns
-required_cols = ["Program", "Config 1", "Config 2", "MPS Ver"]
+required_cols = ["Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "MPS Ver"]
 missing = [c for c in required_cols if c not in mps_df.columns]
 if missing:
 	st.error(f"Missing required columns: {missing}")
@@ -107,6 +107,9 @@ st.subheader("Filters")
 program_options = sorted(mps_df["Program"].dropna().astype(str).unique())
 config1_options = sorted(mps_df["Config 1"].dropna().astype(str).unique())
 config2_options = sorted(mps_df["Config 2"].dropna().astype(str).unique())
+config3_options = sorted(mps_df["Config 3"].dropna().astype(str).unique())
+config4_options = sorted(mps_df["Config 4"].dropna().astype(str).unique())
+config5_options = sorted(mps_df["Config 5"].dropna().astype(str).unique())
 
 # Initialize applied state
 if "applied_programs" not in st.session_state:
@@ -115,6 +118,12 @@ if "applied_config1" not in st.session_state:
 	st.session_state["applied_config1"] = config1_options
 if "applied_config2" not in st.session_state:
 	st.session_state["applied_config2"] = config2_options
+if "applied_config3" not in st.session_state:
+	st.session_state["applied_config3"] = config3_options
+if "applied_config4" not in st.session_state:
+	st.session_state["applied_config4"] = config4_options
+if "applied_config5" not in st.session_state:
+	st.session_state["applied_config5"] = config5_options
 if "applied_metric" not in st.session_state:
 	st.session_state["applied_metric"] = "Incremental"
 
@@ -126,7 +135,15 @@ try:
 		programs=st.session_state["applied_programs"],
 		config1=st.session_state["applied_config1"],
 		config2=st.session_state["applied_config2"],
+		config3=st.session_state["applied_config3"],
+		config4=st.session_state["applied_config4"],
+		config5=st.session_state["applied_config5"],
 		metric=st.session_state["applied_metric"],
+		ttl_config1=st.session_state["applied_ttl1"],
+		ttl_config2=st.session_state["applied_ttl2"],
+		ttl_config3=st.session_state["applied_ttl3"],
+		ttl_config4=st.session_state["applied_ttl4"],
+		ttl_config5=st.session_state["applied_ttl5"],
 	)
 except Exception:
 	_preview_long = pd.DataFrame()
@@ -158,9 +175,15 @@ if "applied_ttl1" not in st.session_state:
 	st.session_state["applied_ttl1"] = False
 if "applied_ttl2" not in st.session_state:
 	st.session_state["applied_ttl2"] = False
+if "applied_ttl3" not in st.session_state:
+	st.session_state["applied_ttl3"] = False
+if "applied_ttl4" not in st.session_state:
+	st.session_state["applied_ttl4"] = False
+if "applied_ttl5" not in st.session_state:
+	st.session_state["applied_ttl5"] = False
 
 # Reset simulation session state when filter context changes
-_sim_ctx_key = (tuple(st.session_state["applied_programs"]), st.session_state["applied_anchor"], st.session_state["applied_metric"], bool(st.session_state["applied_ttl1"]), bool(st.session_state["applied_ttl2"]))
+_sim_ctx_key = (tuple(st.session_state["applied_programs"]), st.session_state["applied_anchor"], st.session_state["applied_metric"], bool(st.session_state["applied_ttl1"]), bool(st.session_state["applied_ttl2"]), bool(st.session_state["applied_ttl3"]), bool(st.session_state["applied_ttl4"]), bool(st.session_state["applied_ttl5"]))
 if st.session_state.get("sim_last_ctx") != _sim_ctx_key:
     # Clear sim-related keys
     for k in list(st.session_state.keys()):
@@ -170,26 +193,47 @@ if st.session_state.get("sim_last_ctx") != _sim_ctx_key:
 
 # Controls with Apply and Refresh
 with st.form("filters_form"):
-	c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
+	# Shrink typography within the filter form
+	st.markdown(
+		"""
+		<style>
+		div[data-testid="stForm"] * { font-size: 13px; }
+		div[data-testid="stForm"] label p { font-size: 13px !important; }
+		div[data-baseweb="select"] * { font-size: 13px !important; }
+		</style>
+		""",
+		unsafe_allow_html=True,
+	)
+	c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 2, 2, 2, 2])
 	with c1:
 		ui_programs = st.multiselect("Program", options=program_options, default=st.session_state["applied_programs"])
 	with c2:
 		ui_config1 = st.multiselect("Config 1", options=config1_options, default=st.session_state["applied_config1"])
+		ui_ttl1 = st.checkbox("TTL Config 1", value=st.session_state["applied_ttl1"]) 
 	with c3:
 		ui_config2 = st.multiselect("Config 2", options=config2_options, default=st.session_state["applied_config2"])
+		ui_ttl2 = st.checkbox("TTL Config 2", value=st.session_state["applied_ttl2"]) 
 	with c4:
-		metric_options = ["Incremental", "Cumulative"]
-		ui_metric = st.radio("Metric", options=metric_options, horizontal=True, index=metric_options.index(st.session_state["applied_metric"]))
-
-	c5, c6, c7 = st.columns([2, 2, 4])
+		ui_config3 = st.multiselect("Config 3", options=config3_options, default=st.session_state["applied_config3"])
+		ui_ttl3 = st.checkbox("TTL Config 3", value=st.session_state["applied_ttl3"]) 
 	with c5:
+		ui_config4 = st.multiselect("Config 4", options=config4_options, default=st.session_state["applied_config4"])
+		ui_ttl4 = st.checkbox("TTL Config 4", value=st.session_state["applied_ttl4"]) 
+	with c6:
+		ui_config5 = st.multiselect("Config 5", options=config5_options, default=st.session_state["applied_config5"])
+		ui_ttl5 = st.checkbox("TTL Config 5", value=st.session_state["applied_ttl5"]) 
+	
+	# Metrics moved next to comparison versions (below)
+
+	c9, c10, c11 = st.columns([2, 2, 4])
+	with c9:
 		ui_anchor = st.selectbox(
 			"Anchor Version",
 			options=versions_in_applied,
 			format_func=lambda v: version_label_map.get(v, v),
 			index=(versions_in_applied.index(st.session_state["applied_anchor"]) if st.session_state["applied_anchor"] in versions_in_applied else 0),
 		)
-	with c6:
+	with c10:
 		avail_comps = [v for v in versions_in_applied if v != ui_anchor]
 		default_comps = [v for v in st.session_state["applied_comparisons"] if v in avail_comps]
 		ui_comparisons = st.multiselect(
@@ -198,23 +242,31 @@ with st.form("filters_form"):
 			format_func=lambda v: version_label_map.get(v, v),
 			default=default_comps,
 		)
-	with c7:
-		ui_ttl1 = st.checkbox("TTL Config 1", value=st.session_state["applied_ttl1"])
-		ui_ttl2 = st.checkbox("TTL Config 2", value=st.session_state["applied_ttl2"])
+	with c11:
+		metric_options = ["Incremental", "Cumulative"]
+		ui_metric = st.radio("Metric", options=metric_options, horizontal=True, index=metric_options.index(st.session_state["applied_metric"]))
 
-	apply_clicked = st.form_submit_button("Apply")
+	apply_clicked = st.form_submit_button("Apply", type="primary")
 
-col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
+
+# Bottom controls: place Refresh and Reset All together on the left
+col_btn1, col_btn2, col_btn3, col_btn4 = st.columns([1, 1, 4, 4])
 with col_btn1:
 	if st.button("Refresh"):
 		st.session_state["applied_programs"] = program_options
 		st.session_state["applied_config1"] = config1_options
 		st.session_state["applied_config2"] = config2_options
+		st.session_state["applied_config3"] = config3_options
+		st.session_state["applied_config4"] = config4_options
+		st.session_state["applied_config5"] = config5_options
 		st.session_state["applied_metric"] = "Incremental"
 		st.session_state["applied_anchor"] = version_sorted[0]
 		st.session_state["applied_comparisons"] = version_sorted[1:5]
 		st.session_state["applied_ttl1"] = False
 		st.session_state["applied_ttl2"] = False
+		st.session_state["applied_ttl3"] = False
+		st.session_state["applied_ttl4"] = False
+		st.session_state["applied_ttl5"] = False
 		st.rerun()
 with col_btn2:
 	if st.button("Reset All"):
@@ -227,30 +279,35 @@ with col_btn2:
 		st.rerun()
 with col_btn3:
 	st.write("")
+with col_btn4:
+	st.write("")
 
-# Show current applied filters for debugging
-with st.expander("🔍 Current Applied Filters (Debug)", expanded=False):
-	st.write(f"**Programs:** {st.session_state['applied_programs']}")
-	st.write(f"**Config 1:** {st.session_state['applied_config1']}")
-	st.write(f"**Config 2:** {st.session_state['applied_config2']}")
-	st.write(f"**Metric:** {st.session_state['applied_metric']}")
-	st.write(f"**Anchor:** {st.session_state['applied_anchor']}")
-	st.write(f"**Comparisons:** {st.session_state['applied_comparisons']}")
-	st.write(f"**TTL Config1:** {st.session_state['applied_ttl1']}")
-	st.write(f"**TTL Config2:** {st.session_state['applied_ttl2']}")
+
+
+ 
+
+
 
 if apply_clicked:
 	st.session_state["applied_programs"] = ui_programs
 	st.session_state["applied_config1"] = ui_config1
 	st.session_state["applied_config2"] = ui_config2
+	st.session_state["applied_config3"] = ui_config3
+	st.session_state["applied_config4"] = ui_config4
+	st.session_state["applied_config5"] = ui_config5
 	st.session_state["applied_metric"] = ui_metric
 	st.session_state["applied_anchor"] = ui_anchor
 	st.session_state["applied_comparisons"] = [v for v in ui_comparisons if v != ui_anchor]
 	st.session_state["applied_ttl1"] = ui_ttl1
 	st.session_state["applied_ttl2"] = ui_ttl2
+	st.session_state["applied_ttl3"] = ui_ttl3
+	st.session_state["applied_ttl4"] = ui_ttl4
+	st.session_state["applied_ttl5"] = ui_ttl5
+	st.success("✅ Filters applied successfully! Tables updated below.")
 	st.rerun()
 
 # --- Prepare long data (using applied state) ---
+
 try:
 	long_df, ver_label_map_from_long = prepare_long_data(
 		mps_df=mps_df,
@@ -258,18 +315,34 @@ try:
 		programs=st.session_state["applied_programs"],
 		config1=st.session_state["applied_config1"],
 		config2=st.session_state["applied_config2"],
+		config3=st.session_state["applied_config3"],
+		config4=st.session_state["applied_config4"],
+		config5=st.session_state["applied_config5"],
 		metric=st.session_state["applied_metric"],
+		ttl_config1=st.session_state["applied_ttl1"],
+		ttl_config2=st.session_state["applied_ttl2"],
+		ttl_config3=st.session_state["applied_ttl3"],
+		ttl_config4=st.session_state["applied_ttl4"],
+		ttl_config5=st.session_state["applied_ttl5"],
 	)
+	
 
 	# Safety: enforce post-process filter once more in case any join/sort reintroduced rows
 	if not long_df.empty:
 		_prog = [str(p).strip() for p in st.session_state["applied_programs"]]
 		_c1 = [str(c).strip() for c in st.session_state["applied_config1"]]
 		_c2 = [str(c).strip() for c in st.session_state["applied_config2"]]
+		_c3 = [str(c).strip() for c in st.session_state["applied_config3"]]
+		_c4 = [str(c).strip() for c in st.session_state["applied_config4"]]
+		_c5 = [str(c).strip() for c in st.session_state["applied_config5"]]
+		
 		long_df = long_df[
 			long_df["Program"].astype(str).str.strip().isin(_prog)
 			& long_df["Config 1"].astype(str).str.strip().isin(_c1)
 			& long_df["Config 2"].astype(str).str.strip().isin(_c2)
+			& long_df["Config 3"].astype(str).str.strip().isin(_c3)
+			& long_df["Config 4"].astype(str).str.strip().isin(_c4)
+			& long_df["Config 5"].astype(str).str.strip().isin(_c5)
 		]
 	
 
@@ -280,9 +353,18 @@ except Exception as e:
 
 # If filtering removes all rows, show empty-state and stop before building tables
 if long_df.empty:
-    st.warning("No data after applying filters. Adjust filters to see results.")
-    st.info(f"Applied filters: Programs={len(st.session_state['applied_programs'])}, Config1={len(st.session_state['applied_config1'])}, Config2={len(st.session_state['applied_config2'])}, Metric={st.session_state['applied_metric']}")
+    st.warning("⚠️ No data matches your current filters. Please adjust your filter selections and click 'Apply Filters' again.")
+    st.info(f"Applied filters: Programs={len(st.session_state['applied_programs'])}, Config1={len(st.session_state['applied_config1'])}, Config2={len(st.session_state['applied_config2'])}, Config3={len(st.session_state['applied_config3'])}, Config4={len(st.session_state['applied_config4'])}, Config5={len(st.session_state['applied_config5'])}, Metric={st.session_state['applied_metric']}")
     st.stop()
+
+# Show data summary with filtering effects
+unique_combinations = long_df.groupby(["Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]).size().shape[0]
+total_possible_programs = len(program_options)
+total_possible_config1 = len(config1_options) 
+filtered_programs = len(long_df["Program"].unique())
+filtered_config1 = len(long_df["Config 1"].unique())
+
+st.success(f"📊 **Data Summary:** {len(long_df):,} data points across {unique_combinations:,} unique Config combinations")
 
 # Constrain versions to those present after filtering
 versions_in_filtered = (
@@ -297,8 +379,37 @@ anchor_version = st.session_state["applied_anchor"]
 comparison_versions = st.session_state["applied_comparisons"]
 ttl_config1 = st.session_state["applied_ttl1"]
 ttl_config2 = st.session_state["applied_ttl2"]
+ttl_config3 = st.session_state["applied_ttl3"]
+ttl_config4 = st.session_state["applied_ttl4"]
+ttl_config5 = st.session_state["applied_ttl5"]
+
+# Ensure selected versions remain valid after filters; adjust if needed
+if anchor_version not in versions_in_filtered:
+	anchor_version = versions_in_filtered[0]
+	st.session_state["applied_anchor"] = anchor_version
+
+comparison_versions = [v for v in comparison_versions if v in versions_in_filtered and v != anchor_version]
+if not comparison_versions:
+	# fallback to next most recent versions excluding anchor
+	comparison_versions = [v for v in versions_in_filtered if v != anchor_version][:4]
+st.session_state["applied_comparisons"] = comparison_versions
+
+# Build a dynamic key suffix to force grid refresh on filter/version changes
+_grid_key_suffix = str(hash((
+	tuple(st.session_state.get("applied_programs", [])),
+	tuple(st.session_state.get("applied_config1", [])),
+	tuple(st.session_state.get("applied_config2", [])),
+	tuple(st.session_state.get("applied_config3", [])),
+	tuple(st.session_state.get("applied_config4", [])),
+	tuple(st.session_state.get("applied_config5", [])),
+	st.session_state.get("applied_metric"),
+	anchor_version,
+	tuple(comparison_versions),
+	bool(ttl_config1), bool(ttl_config2), bool(ttl_config3), bool(ttl_config4), bool(ttl_config5)
+)))
 
 # --- Build tables ---
+
 comp_df, comp_week_quarter = build_comparison_table(
 	long_df=long_df,
 	mapping=mapping,
@@ -306,8 +417,13 @@ comp_df, comp_week_quarter = build_comparison_table(
 	selected_versions=[anchor_version, *comparison_versions],
 	ttl_config1=ttl_config1,
 	ttl_config2=ttl_config2,
+	ttl_config3=ttl_config3,
+	ttl_config4=ttl_config4,
+	ttl_config5=ttl_config5,
 	include_config_percent=False,
 )
+
+
 
 delta_df, delta_week_quarter = build_delta_table(
 	long_df=long_df,
@@ -317,11 +433,14 @@ delta_df, delta_week_quarter = build_delta_table(
 	comparison_versions=comparison_versions,
 	ttl_config1=ttl_config1,
 	ttl_config2=ttl_config2,
+	ttl_config3=ttl_config3,
+	ttl_config4=ttl_config4,
+	ttl_config5=ttl_config5,
 )
 
 # --- AgGrid rendering helpers ---
 def build_quarter_grouped_column_defs(df: pd.DataFrame, week_quarter: Dict[str, str], colorize_delta: bool) -> List[dict]:
-	key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config %"]
+	key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "Config %"]
 	week_cols = [c for c in df.columns if c not in key_cols]
 
 	# Group weeks by quarter in order of appearance
@@ -342,7 +461,7 @@ def build_quarter_grouped_column_defs(df: pd.DataFrame, week_quarter: Dict[str, 
 				"pinned": "left",
 				"sortable": True,
 				"filter": True,
-				"minWidth": 140 if k in ("Ver_Wk_Code", "MPS Type") else (100 if k == "Config %" else 160),
+				"minWidth": 140 if k in ("Ver_Wk_Code", "MPS Type") else (100 if k == "Config %" else 120),
 			}
 			# Format Config % column properly
 			if k == "Config %":
@@ -375,7 +494,7 @@ def build_quarter_grouped_column_defs(df: pd.DataFrame, week_quarter: Dict[str, 
 def render_aggrid(df: pd.DataFrame, week_quarter: Dict[str, str], is_delta: bool, key: str):
 	# Always format numbers for better display, regardless of AgGrid availability
 	formatted_df = df.copy()
-	key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config %"]
+	key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "Config %"]
 	week_cols = [c for c in formatted_df.columns if c not in key_cols]
 	for col in week_cols:
 		if col in formatted_df.columns:
@@ -518,7 +637,26 @@ def render_aggrid_grouped(
 		key=key,
 	)
 
+
+# Helper to build grouped request tables for simulation
+def _build_grouped_request_table(to_go_df: pd.DataFrame, group_cols: List[str]) -> pd.DataFrame:
+	grouped = to_go_df.groupby(group_cols, as_index=False)["ToGo"].sum()
+	total = float(grouped["ToGo"].sum())
+	grouped["Mix"] = grouped["ToGo"].map(lambda x: (x / total) if total > 0 else 0.0)
+	grouped["Mix %"] = grouped["Mix"].map(lambda x: f"{x*100:.2f}%")
+	grouped["Requested"] = 0.0
+	return grouped
+
 # --- Tabs with exports ---
+# Enlarge tab label font size
+st.markdown(
+	"""
+	<style>
+	div.stTabs button[role="tab"] p { font-size: 20px !important; }
+	</style>
+	""",
+	unsafe_allow_html=True,
+)
 comp_tab, sim_tab = st.tabs(["Comparison Table", "Simulation"])
 
 
@@ -533,16 +671,16 @@ with comp_tab:
 	comparisons_only = comp_df[comp_df["Ver_Wk_Code"] != anchor_label].copy()
 
 	st.markdown("**Anchor**")
-	render_aggrid(anchor_only, comp_week_quarter, is_delta=False, key="comp_anchor")
+	render_aggrid(anchor_only, comp_week_quarter, is_delta=False, key=f"comp_anchor_{_grid_key_suffix}")
 	st.divider()
 	st.markdown("**Comparisons**")
-	render_aggrid(comparisons_only, comp_week_quarter, is_delta=False, key="comp_comparisons")
+	render_aggrid(comparisons_only, comp_week_quarter, is_delta=False, key=f"comp_comparisons_{_grid_key_suffix}")
 	
 	# Add Delta section at the bottom
 	st.divider()
 	st.markdown("**Delta Analysis**")
 	st.caption("Rows = each Comparison vs Anchor (Anchor − Comparison). Green=positive, Red=negative")
-	render_aggrid(delta_df, delta_week_quarter, is_delta=True, key="delta")
+	render_aggrid(delta_df, delta_week_quarter, is_delta=True, key=f"delta_{_grid_key_suffix}")
 	
 	# Exports section
 	st.markdown("**Export Options**")
@@ -587,9 +725,38 @@ with sim_tab:
 		with c_top1:
 			action = st.radio("Action", options=["Cut", "Add"], horizontal=True)
 		with c_top2:
-			granularity = st.radio("Granularity", options=["Program", "Config 1", "Config 2", "Config 1 × Config 2"], index=0)
+			granularity = st.radio(
+				"Granularity",
+				options=[
+					"Program",
+					"Config 1",
+					"Config 2",
+					"Config 3",
+					"Config 4",
+					"Config 5",
+					"Custom (Choose Configs)",
+					"Leaf (All Configs)",
+				],
+				index=0,
+			)
 		with c_top3:
 			refresh_clicked = st.button("🔄 Refresh Per-Bucket Values", type="secondary")
+
+		# Additional controls for custom grouping selection
+		custom_group_dims: List[str] = []
+		if granularity == "Custom (Choose Configs)":
+			st.markdown("**Select config dimensions to group by**")
+			all_dims = ["Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]
+			prev_dims = st.session_state.get("sim_custom_dims", ["Config 1", "Config 2"])  # sensible default
+			custom_group_dims = st.multiselect(
+				"Group by",
+				options=all_dims,
+				default=[d for d in prev_dims if d in all_dims],
+			)
+			# Track changes to trigger table refresh
+			if tuple(custom_group_dims) != tuple(prev_dims):
+				st.session_state["sim_custom_dims"] = list(custom_group_dims)
+				st.session_state["sim_custom_dims_changed"] = True
 
 		# Find latest version (prefer POR) for program
 		latest_meta = get_latest_version_for_program(long_df, program_for_sim, prefer_type="POR")
@@ -603,23 +770,23 @@ with sim_tab:
 
 			# Build incremental pivot for horizon and To-Go by bucket
 			inc_pivot_hz, week_cols_hz = build_inc_pivot_for_horizon(
-				long_df=long_df, mapping=mapping, program=program_for_sim, version=mps_ver_latest, ver_date=ver_date_latest, ttl_config1=ttl_config1, ttl_config2=ttl_config2
+				long_df=long_df, mapping=mapping, program=program_for_sim, version=mps_ver_latest, ver_date=ver_date_latest, ttl_config1=ttl_config1, ttl_config2=ttl_config2, ttl_config3=ttl_config3, ttl_config4=ttl_config4, ttl_config5=ttl_config5
 			)
 			to_go_df = compute_to_go_by_bucket(inc_pivot_hz, week_cols_hz)
 			if not week_cols_hz:
 				st.warning("No horizon weeks on/after the latest POR date for the selected program. Nothing to simulate.")
 				st.markdown("**Current To-Go (Program latest POR)**")
 				# Format ToGo with proper number formatting and Mix as percentage
-				display_togo = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
+				display_togo = to_go_df[["Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "ToGo", "Mix"]].copy()
 				display_togo["ToGo"] = display_togo["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
 				display_togo["Mix %"] = display_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
-				st.dataframe(display_togo[["Config 1", "Config 2", "ToGo", "Mix %"]], use_container_width=True)
+				st.dataframe(display_togo[["Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "ToGo", "Mix %"]], use_container_width=True)
 				sim_ready = False
 
 		st.markdown("### Step 2: Enter Requested Quantities")
 		
 		# Initialize or refresh per-bucket data based on granularity selection
-		if refresh_clicked or f"sim_table_{granularity}" not in st.session_state:
+		if refresh_clicked or f"sim_table_{granularity}" not in st.session_state or st.session_state.get("sim_custom_dims_changed"):
 			if granularity == "Program":
 				# Single input for program level
 				program_data = pd.DataFrame({
@@ -645,12 +812,44 @@ with sim_tab:
 				c2_togo["Mix %"] = c2_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
 				c2_togo["Requested"] = 0.0
 				st.session_state[f"sim_table_{granularity}"] = c2_togo
-			else:  # Config 1 × Config 2
-				# Pair-level editor with Mix %
-				pairs_df = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
-				pairs_df["Mix %"] = pairs_df["Mix"].map(lambda x: f"{x*100:.2f}%")
-				pairs_df["Requested"] = 0.0
-				st.session_state[f"sim_table_{granularity}"] = pairs_df
+			elif granularity == "Config 3":
+				# Build Config3-level table with Mix %
+				c3_togo = to_go_df.groupby(["Config 3"], as_index=False)["ToGo"].sum()
+				total_togo3 = float(c3_togo["ToGo"].sum())
+				c3_togo["Mix"] = c3_togo["ToGo"].map(lambda x: (x / total_togo3) if total_togo3 > 0 else 0.0)
+				c3_togo["Mix %"] = c3_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
+				c3_togo["Requested"] = 0.0
+				st.session_state[f"sim_table_{granularity}"] = c3_togo
+			elif granularity == "Config 4":
+				# Build Config4-level table with Mix %
+				c4_togo = to_go_df.groupby(["Config 4"], as_index=False)["ToGo"].sum()
+				total_togo4 = float(c4_togo["ToGo"].sum())
+				c4_togo["Mix"] = c4_togo["ToGo"].map(lambda x: (x / total_togo4) if total_togo4 > 0 else 0.0)
+				c4_togo["Mix %"] = c4_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
+				c4_togo["Requested"] = 0.0
+				st.session_state[f"sim_table_{granularity}"] = c4_togo
+			elif granularity == "Config 5":
+				# Build Config5-level table with Mix %
+				c5_togo = to_go_df.groupby(["Config 5"], as_index=False)["ToGo"].sum()
+				total_togo5 = float(c5_togo["ToGo"].sum())
+				c5_togo["Mix"] = c5_togo["ToGo"].map(lambda x: (x / total_togo5) if total_togo5 > 0 else 0.0)
+				c5_togo["Mix %"] = c5_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
+				c5_togo["Requested"] = 0.0
+				st.session_state[f"sim_table_{granularity}"] = c5_togo
+			elif granularity == "Custom (Choose Configs)":
+				dims = st.session_state.get("sim_custom_dims", ["Config 1", "Config 2"]) or ["Config 1", "Config 2"]
+				valid_dims = [d for d in dims if d in ["Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]]
+				if len(valid_dims) == 0:
+					valid_dims = ["Config 1"]
+				grouped = _build_grouped_request_table(to_go_df, valid_dims)
+				st.session_state[f"sim_table_{granularity}"] = grouped
+				st.session_state["sim_custom_dims_changed"] = False
+			else:  # Leaf (All Configs)
+				# Leaf-level editor with Mix %
+				leaf_df = to_go_df[["Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "ToGo", "Mix"]].copy()
+				leaf_df["Mix %"] = leaf_df["Mix"].map(lambda x: f"{x*100:.2f}%")
+				leaf_df["Requested"] = 0.0
+				st.session_state[f"sim_table_{granularity}"] = leaf_df
 
 		# Display the appropriate editor based on granularity
 		if granularity == "Program":
@@ -671,7 +870,7 @@ with sim_tab:
 				}
 			)
 		elif granularity == "Config 1":
-			st.markdown("Enter per-Config 1 amounts (will be split across Config 2 by to-go mix):")
+			st.markdown("Enter per-Config 1 amounts (will be split across other configs by to-go mix):")
 			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
 			# Format numbers with thousand separators
 			display_data = current_data.copy()
@@ -688,7 +887,7 @@ with sim_tab:
 				}
 			)
 		elif granularity == "Config 2":
-			st.markdown("Enter per-Config 2 amounts (will be split across Config 1 by to-go mix):")
+			st.markdown("Enter per-Config 2 amounts (will be split across other configs by to-go mix):")
 			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
 			# Format numbers with thousand separators
 			display_data = current_data.copy()
@@ -704,15 +903,84 @@ with sim_tab:
 					"Requested": st.column_config.NumberColumn("Requested", format="%.0f")
 				}
 			)
-		else:  # Config 1 × Config 2
-			st.markdown("Enter per-bucket amounts:")
+		elif granularity == "Config 3":
+			st.markdown("Enter per-Config 3 amounts (will be split across other configs by to-go mix):")
 			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
 			# Format numbers with thousand separators
 			display_data = current_data.copy()
 			if not display_data.empty:
 				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
 				edited_data = st.data_editor(
-				display_data[["Config 1", "Config 2", "ToGo", "Mix %", "Requested"]], 
+				display_data[["Config 3", "ToGo", "Mix %", "Requested"]], 
+				key=f"sim_edit_{granularity}",
+					use_container_width=True,
+				column_config={
+					"ToGo": st.column_config.TextColumn("ToGo", disabled=True),
+					"Mix %": st.column_config.TextColumn("Mix %", disabled=True),
+					"Requested": st.column_config.NumberColumn("Requested", format="%.0f")
+				}
+			)
+		elif granularity == "Config 4":
+			st.markdown("Enter per-Config 4 amounts (will be split across other configs by to-go mix):")
+			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
+			# Format numbers with thousand separators
+			display_data = current_data.copy()
+			if not display_data.empty:
+				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+				edited_data = st.data_editor(
+				display_data[["Config 4", "ToGo", "Mix %", "Requested"]], 
+				key=f"sim_edit_{granularity}",
+					use_container_width=True,
+				column_config={
+					"ToGo": st.column_config.TextColumn("ToGo", disabled=True),
+					"Mix %": st.column_config.TextColumn("Mix %", disabled=True),
+					"Requested": st.column_config.NumberColumn("Requested", format="%.0f")
+				}
+			)
+		elif granularity == "Config 5":
+			st.markdown("Enter per-Config 5 amounts (will be split across other configs by to-go mix):")
+			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
+			# Format numbers with thousand separators
+			display_data = current_data.copy()
+			if not display_data.empty:
+				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+				edited_data = st.data_editor(
+				display_data[["Config 5", "ToGo", "Mix %", "Requested"]], 
+				key=f"sim_edit_{granularity}",
+					use_container_width=True,
+				column_config={
+					"ToGo": st.column_config.TextColumn("ToGo", disabled=True),
+					"Mix %": st.column_config.TextColumn("Mix %", disabled=True),
+					"Requested": st.column_config.NumberColumn("Requested", format="%.0f")
+				}
+			)
+		elif granularity == "Custom (Choose Configs)":
+			dims = st.session_state.get("sim_custom_dims", ["Config 1", "Config 2"]) or ["Config 1", "Config 2"]
+			st.markdown(f"Enter grouped amounts by {' × '.join(dims)} (split to leaves by to-go mix):")
+			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
+			display_data = current_data.copy()
+			if not display_data.empty:
+				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+				available = [c for c in [*dims, "ToGo", "Mix %", "Requested"] if c in display_data.columns]
+				edited_data = st.data_editor(
+					display_data[available],
+					key=f"sim_edit_{granularity}",
+					use_container_width=True,
+					column_config={
+						"ToGo": st.column_config.TextColumn("ToGo", disabled=True),
+						"Mix %": st.column_config.TextColumn("Mix %", disabled=True),
+						"Requested": st.column_config.NumberColumn("Requested", format="%.0f"),
+					},
+				)
+		else:  # Leaf (All Configs)
+			st.markdown("Enter per-leaf bucket amounts:")
+			current_data = st.session_state.get(f"sim_table_{granularity}", pd.DataFrame())
+			# Format numbers with thousand separators
+			display_data = current_data.copy()
+			if not display_data.empty:
+				display_data["ToGo"] = display_data["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
+				edited_data = st.data_editor(
+				display_data[["Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "ToGo", "Mix %", "Requested"]], 
 				key=f"sim_edit_{granularity}",
 					use_container_width=True,
 				column_config={
@@ -729,10 +997,10 @@ with sim_tab:
 		if sim_ready and not apply_sim:
 			st.markdown("**Current To-Go (Program latest POR)**")
 			# Format ToGo with proper number formatting and Mix as percentage
-			display_togo = to_go_df[["Config 1", "Config 2", "ToGo", "Mix"]].copy()
+			display_togo = to_go_df[["Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "ToGo", "Mix"]].copy()
 			display_togo["ToGo"] = display_togo["ToGo"].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else "")
 			display_togo["Mix %"] = display_togo["Mix"].map(lambda x: f"{x*100:.2f}%")
-			st.dataframe(display_togo[["Config 1", "Config 2", "ToGo", "Mix %"]], use_container_width=True)
+			st.dataframe(display_togo[["Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "ToGo", "Mix %"]], use_container_width=True)
 
 		if sim_ready and apply_sim:
 			try:
@@ -747,7 +1015,7 @@ with sim_tab:
 					st.stop()
 				
 				# Build allocations based on granularity using edited data
-				allocations: Dict[Tuple[str, str], float] = {}
+				allocations: Dict[Tuple[str, str, str, str, str], float] = {}
 				
 				if granularity == "Program":
 					# Use edited_data from the data_editor
@@ -759,62 +1027,165 @@ with sim_tab:
 							break
 				elif granularity == "Config 1":
 					# For each Config 1 row with Requested, split across its children by to-go mix
-					pairs_lookup = to_go_df.copy()
+					lookup = to_go_df.copy()
 					for _, r in edited_data.iterrows():
 						req = float(r.get("Requested", 0.0))
 						if req == 0:
 							continue
 						c1_val = str(r.get("Config 1"))
 						signed = -req if action == "Cut" else req
-						children = pairs_lookup[pairs_lookup["Config 1"] == c1_val].copy()
+						children = lookup[lookup["Config 1"] == c1_val].copy()
 						child_sum = float(children["ToGo"].sum())
 						if child_sum <= 0:
 							continue
 						for _, cr in children.iterrows():
-							pair_key = (str(cr.get("Config 1")), str(cr.get("Config 2")))
-							allocations[pair_key] = allocations.get(pair_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
+							leaf_key = (str(cr.get("Config 1")), str(cr.get("Config 2")), str(cr.get("Config 3")), str(cr.get("Config 4")), str(cr.get("Config 5")))
+							allocations[leaf_key] = allocations.get(leaf_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
 				elif granularity == "Config 2":
-					# For each Config 2 row with Requested, split across its Config 1 children by to-go mix
-					pairs_lookup2 = to_go_df.copy()
+					# For each Config 2 row with Requested, split across its children by to-go mix
+					lookup = to_go_df.copy()
 					for _, r in edited_data.iterrows():
 						req = float(r.get("Requested", 0.0))
 						if req == 0:
 							continue
 						c2_val = str(r.get("Config 2"))
 						signed = -req if action == "Cut" else req
-						children2 = pairs_lookup2[pairs_lookup2["Config 2"] == c2_val].copy()
-						child_sum2 = float(children2["ToGo"].sum())
-						if child_sum2 <= 0:
+						children = lookup[lookup["Config 2"] == c2_val].copy()
+						child_sum = float(children["ToGo"].sum())
+						if child_sum <= 0:
 							continue
-						for _, cr in children2.iterrows():
-							pair_key = (str(cr.get("Config 1")), str(cr.get("Config 2")))
-							allocations[pair_key] = allocations.get(pair_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum2
-				else:  # Config 1 × Config 2
+						for _, cr in children.iterrows():
+							leaf_key = (str(cr.get("Config 1")), str(cr.get("Config 2")), str(cr.get("Config 3")), str(cr.get("Config 4")), str(cr.get("Config 5")))
+							allocations[leaf_key] = allocations.get(leaf_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
+				elif granularity == "Config 3":
+					# For each Config 3 row with Requested, split across its children by to-go mix
+					lookup = to_go_df.copy()
+					for _, r in edited_data.iterrows():
+						req = float(r.get("Requested", 0.0))
+						if req == 0:
+							continue
+						c3_val = str(r.get("Config 3"))
+						signed = -req if action == "Cut" else req
+						children = lookup[lookup["Config 3"] == c3_val].copy()
+						child_sum = float(children["ToGo"].sum())
+						if child_sum <= 0:
+							continue
+						for _, cr in children.iterrows():
+							leaf_key = (str(cr.get("Config 1")), str(cr.get("Config 2")), str(cr.get("Config 3")), str(cr.get("Config 4")), str(cr.get("Config 5")))
+							allocations[leaf_key] = allocations.get(leaf_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
+				elif granularity == "Config 4":
+					# For each Config 4 row with Requested, split across its children by to-go mix
+					lookup = to_go_df.copy()
+					for _, r in edited_data.iterrows():
+						req = float(r.get("Requested", 0.0))
+						if req == 0:
+							continue
+						c4_val = str(r.get("Config 4"))
+						signed = -req if action == "Cut" else req
+						children = lookup[lookup["Config 4"] == c4_val].copy()
+						child_sum = float(children["ToGo"].sum())
+						if child_sum <= 0:
+							continue
+						for _, cr in children.iterrows():
+							leaf_key = (str(cr.get("Config 1")), str(cr.get("Config 2")), str(cr.get("Config 3")), str(cr.get("Config 4")), str(cr.get("Config 5")))
+							allocations[leaf_key] = allocations.get(leaf_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
+				elif granularity == "Config 5":
+					# For each Config 5 row with Requested, split across its children by to-go mix
+					lookup = to_go_df.copy()
+					for _, r in edited_data.iterrows():
+						req = float(r.get("Requested", 0.0))
+						if req == 0:
+							continue
+						c5_val = str(r.get("Config 5"))
+						signed = -req if action == "Cut" else req
+						children = lookup[lookup["Config 5"] == c5_val].copy()
+						child_sum = float(children["ToGo"].sum())
+						if child_sum <= 0:
+							continue
+						for _, cr in children.iterrows():
+							leaf_key = (str(cr.get("Config 1")), str(cr.get("Config 2")), str(cr.get("Config 3")), str(cr.get("Config 4")), str(cr.get("Config 5")))
+							allocations[leaf_key] = allocations.get(leaf_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
+				# Removed fixed combination handlers; Custom flow below covers arbitrary groupings
+				elif granularity == "Config 1 × Config 2":
+					# Split requested amounts for each (Config1, Config2) pair down to leaves below them by ToGo
+					lookup = to_go_df.copy()
+					for _, r in edited_data.iterrows():
+						req = float(r.get("Requested", 0.0))
+						if req == 0:
+							continue
+						c1 = str(r.get("Config 1"))
+						c2 = str(r.get("Config 2"))
+						signed = -req if action == "Cut" else req
+						children = lookup[(lookup["Config 1"] == c1) & (lookup["Config 2"] == c2)].copy()
+						child_sum = float(children["ToGo"].sum())
+						if child_sum <= 0:
+							continue
+						for _, cr in children.iterrows():
+							leaf_key = (str(cr.get("Config 1")), str(cr.get("Config 2")), str(cr.get("Config 3")), str(cr.get("Config 4")), str(cr.get("Config 5")))
+							allocations[leaf_key] = allocations.get(leaf_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
+				elif granularity == "Config 3 × Config 4 × Config 5":
+					# Split requested amounts for each (Config3, Config4, Config5) tuple down to leaves above them by ToGo
+					lookup = to_go_df.copy()
+					for _, r in edited_data.iterrows():
+						req = float(r.get("Requested", 0.0))
+						if req == 0:
+							continue
+						c3 = str(r.get("Config 3"))
+						c4 = str(r.get("Config 4"))
+						c5 = str(r.get("Config 5"))
+						signed = -req if action == "Cut" else req
+						children = lookup[(lookup["Config 3"] == c3) & (lookup["Config 4"] == c4) & (lookup["Config 5"] == c5)].copy()
+						child_sum = float(children["ToGo"].sum())
+						if child_sum <= 0:
+							continue
+						for _, cr in children.iterrows():
+							leaf_key = (str(cr.get("Config 1")), str(cr.get("Config 2")), str(cr.get("Config 3")), str(cr.get("Config 4")), str(cr.get("Config 5")))
+							allocations[leaf_key] = allocations.get(leaf_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
+				elif granularity == "Custom (Choose Configs)":
+					# Split requested amounts for arbitrary group of config dimensions
+					dims = st.session_state.get("sim_custom_dims", ["Config 1", "Config 2"]) or ["Config 1", "Config 2"]
+					lookup = to_go_df.copy()
+					for _, r in edited_data.iterrows():
+						req = float(r.get("Requested", 0.0))
+						if req == 0:
+							continue
+						signed = -req if action == "Cut" else req
+						mask = pd.Series([True] * len(lookup))
+						for d in dims:
+							mask &= (lookup[d] == str(r.get(d)))
+						children = lookup[mask].copy()
+						child_sum = float(children["ToGo"].sum())
+						if child_sum <= 0:
+							continue
+						for _, cr in children.iterrows():
+							leaf_key = (str(cr.get("Config 1")), str(cr.get("Config 2")), str(cr.get("Config 3")), str(cr.get("Config 4")), str(cr.get("Config 5")))
+							allocations[leaf_key] = allocations.get(leaf_key, 0.0) + signed * float(cr.get("ToGo", 0.0)) / child_sum
+				else:  # Leaf (All Configs)
 					for _, r in edited_data.iterrows():
 						val = float(r.get("Requested", 0.0))
 						if val == 0:
 							continue
-						key = (str(r.get("Config 1")), str(r.get("Config 2")))
+						key = (str(r.get("Config 1")), str(r.get("Config 2")), str(r.get("Config 3")), str(r.get("Config 4")), str(r.get("Config 5")))
 						allocations[key] = allocations.get(key, 0.0) + (-val if action == "Cut" else val)
 
 				# Pre-check for cuts: cannot exceed to-go
-				violations: List[Tuple[str, str, float, float]] = []
-				to_go_lookup = { (str(r["Config 1"]), str(r["Config 2"])): float(r["ToGo"]) for _, r in to_go_df.iterrows() }
+				violations: List[Tuple[str, str, str, str, str, float, float]] = []
+				to_go_lookup = { (str(r["Config 1"]), str(r["Config 2"]), str(r["Config 3"]), str(r["Config 4"]), str(r["Config 5"])): float(r["ToGo"]) for _, r in to_go_df.iterrows() }
 				for key, amt in allocations.items():
 					if amt < 0:
 						requested_cut = -amt
 						available = to_go_lookup.get(key, 0.0)
 						if requested_cut > available + 1e-9:
-							violations.append((key[0], key[1], requested_cut, available))
+							violations.append((key[0], key[1], key[2], key[3], key[4], requested_cut, available))
 				if violations:
-					st.error("Simulation can’t be applied: requested cut exceeds remaining to-go.")
-					viol_df = pd.DataFrame(violations, columns=["Config 1", "Config 2", "Requested", "Available"])
+					st.error("Simulation can't be applied: requested cut exceeds remaining to-go.")
+					viol_df = pd.DataFrame(violations, columns=["Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "Requested", "Available"])
 					st.dataframe(viol_df, use_container_width=True)
 					st.stop()
 
 				sim_inc = lifo_apply_allocation(inc_pivot_hz, week_cols_hz, allocations)
 
-				key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2"]
+				key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]
 				orig_inc = inc_pivot_hz.copy()
 				orig_inc = orig_inc[key_cols + week_cols_hz]
 				if "MPS Type" not in orig_inc.columns:
@@ -839,10 +1210,22 @@ with sim_tab:
 							elif granularity == "Config 2":
 								config_name = str(r.get("Config 2", ""))
 								affected_configs.append(config_name)
-							else:  # Config 1 × Config 2
+							elif granularity == "Config 3":
+								config_name = str(r.get("Config 3", ""))
+								affected_configs.append(config_name)
+							elif granularity == "Config 4":
+								config_name = str(r.get("Config 4", ""))
+								affected_configs.append(config_name)
+							elif granularity == "Config 5":
+								config_name = str(r.get("Config 5", ""))
+								affected_configs.append(config_name)
+							else:  # Leaf (All Configs)
 								config1 = str(r.get("Config 1", ""))
 								config2 = str(r.get("Config 2", ""))
-								affected_configs.append(f"{config1}, {config2}")
+								config3 = str(r.get("Config 3", ""))
+								config4 = str(r.get("Config 4", ""))
+								config5 = str(r.get("Config 5", ""))
+								affected_configs.append(f"{config1}·{config2}·{config3}·{config4}·{config5}")
 					
 					if affected_configs:
 						configs_str = ", ".join(affected_configs)

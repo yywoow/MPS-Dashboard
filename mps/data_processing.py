@@ -82,15 +82,21 @@ def prepare_long_data(
 	programs: Optional[Sequence[str]] = None,
 	config1: Optional[Sequence[str]] = None,
 	config2: Optional[Sequence[str]] = None,
+	config3: Optional[Sequence[str]] = None,
+	config4: Optional[Sequence[str]] = None,
+	config5: Optional[Sequence[str]] = None,
 	metric: str = "Incremental",
 	ttl_config1: bool = False,
 	ttl_config2: bool = False,
+	ttl_config3: bool = False,
+	ttl_config4: bool = False,
+	ttl_config5: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
 	"""Reshape wide MPS into long with mapping join and compute cumulative.
 
 	Returns the long dataframe and a dict mapping version raw -> version display label (Ver_Wk_Code).
 	"""
-	required_id_cols = ["Program", "Config 1", "Config 2", "MPS Ver"]
+	required_id_cols = ["Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "MPS Ver"]
 	missing = [c for c in required_id_cols if c not in mps_df.columns]
 	if missing:
 		raise ValueError(f"Missing required columns in uploaded file: {missing}")
@@ -148,9 +154,9 @@ def prepare_long_data(
 	long_df = long_df.drop(columns=[M.cymw])
 
 	# Compute cumulative within each Program/Config/MPS Ver sorted by Date_Code
-	long_df = long_df.sort_values(["Ver_Date", "Program", "Config 1", "Config 2", "MPS Type", M.date_code])
+	long_df = long_df.sort_values(["Ver_Date", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "MPS Type", M.date_code])
 	long_df["Cumulative"] = (
-		long_df.groupby(["Program", "Config 1", "Config 2", "MPS Ver", "MPS Type"])  # type: ignore
+		long_df.groupby(["Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "MPS Ver", "MPS Type"])  # type: ignore
 		["Incremental"].cumsum()
 	)
 
@@ -165,6 +171,15 @@ def prepare_long_data(
 	if config2 is not None and len(config2) > 0:
 		_c2_norm = [str(c).strip() for c in config2]
 		long_df = long_df[long_df["Config 2"].astype(str).str.strip().isin(_c2_norm)]
+	if config3 is not None and len(config3) > 0:
+		_c3_norm = [str(c).strip() for c in config3]
+		long_df = long_df[long_df["Config 3"].astype(str).str.strip().isin(_c3_norm)]
+	if config4 is not None and len(config4) > 0:
+		_c4_norm = [str(c).strip() for c in config4]
+		long_df = long_df[long_df["Config 4"].astype(str).str.strip().isin(_c4_norm)]
+	if config5 is not None and len(config5) > 0:
+		_c5_norm = [str(c).strip() for c in config5]
+		long_df = long_df[long_df["Config 5"].astype(str).str.strip().isin(_c5_norm)]
 
 	version_label_map = (
 		long_df.drop_duplicates(subset=["MPS Ver"])  # each version
@@ -173,14 +188,20 @@ def prepare_long_data(
 	return long_df, version_label_map
 
 
-def _aggregate_for_ttl(df: pd.DataFrame, ttl_config1: bool, ttl_config2: bool) -> pd.DataFrame:
+def _aggregate_for_ttl(df: pd.DataFrame, ttl_config1: bool, ttl_config2: bool, ttl_config3: bool = False, ttl_config4: bool = False, ttl_config5: bool = False) -> pd.DataFrame:
 	res = df.copy()
 	if ttl_config1:
 		res["Config 1"] = "TTL"
 	if ttl_config2:
 		res["Config 2"] = "TTL"
-	if ttl_config1 or ttl_config2:
-		group_cols = ["MPS Ver", "Ver_Date", "Ver_Wk_Code", "Program", "Config 1", "Config 2", "MPS Type", M.date_code, M.wk_code, M.quarter]
+	if ttl_config3:
+		res["Config 3"] = "TTL"
+	if ttl_config4:
+		res["Config 4"] = "TTL"
+	if ttl_config5:
+		res["Config 5"] = "TTL"
+	if ttl_config1 or ttl_config2 or ttl_config3 or ttl_config4 or ttl_config5:
+		group_cols = ["MPS Ver", "Ver_Date", "Ver_Wk_Code", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "MPS Type", M.date_code, M.wk_code, M.quarter]
 		res = (
 			res.groupby(group_cols, as_index=False)[["Incremental", "Cumulative"]]
 			.sum()
@@ -199,7 +220,7 @@ def _pivot_display(
 		raise ValueError("metric must be 'Incremental' or 'Cumulative'")
 
 	# Empty guard: return an empty frame with key columns so UI doesn't break
-	index_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2"]
+	index_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]
 	if df.empty:
 		return pd.DataFrame(columns=index_cols), {}
 
@@ -225,7 +246,7 @@ def _pivot_display(
         df.drop_duplicates(subset=["Ver_Wk_Code", "Ver_Date"]).sort_values("Ver_Date", ascending=False)["Ver_Wk_Code"].tolist()
 	)
 	pivot["_ver_order"] = pivot["Ver_Wk_Code"].map({v: i for i, v in enumerate(version_order)})
-	pivot = pivot.sort_values(["_ver_order", "MPS Type", "Program", "Config 1", "Config 2"]).drop(columns=["_ver_order"])
+	pivot = pivot.sort_values(["_ver_order", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]).drop(columns=["_ver_order"])
 
 	# Add config percentage column if requested (for consistency with simulation tables)
 	if include_config_percent:
@@ -246,9 +267,9 @@ def _pivot_display(
 			else:
 				config_percents.append("0.00%")
 		
-		# Insert Config % column after Config 2
-		config2_idx = pivot.columns.get_loc("Config 2") + 1
-		pivot.insert(config2_idx, "Config %", config_percents)
+		# Insert Config % column after Config 5
+		config5_idx = pivot.columns.get_loc("Config 5") + 1
+		pivot.insert(config5_idx, "Config %", config_percents)
 
 	# Quarter banding metadata
 	week_to_quarter = (
@@ -278,14 +299,14 @@ def get_latest_version_for_program(long_df: pd.DataFrame, program: str, prefer_t
     return str(row["MPS Ver"]), pd.to_datetime(row["Ver_Date"]), str(row["Ver_Wk_Code"])
 
 
-def build_inc_pivot_for_horizon(long_df: pd.DataFrame, mapping: pd.DataFrame, program: str, version: str, ver_date: pd.Timestamp, ttl_config1: bool, ttl_config2: bool) -> Tuple[pd.DataFrame, List[str]]:
+def build_inc_pivot_for_horizon(long_df: pd.DataFrame, mapping: pd.DataFrame, program: str, version: str, ver_date: pd.Timestamp, ttl_config1: bool, ttl_config2: bool, ttl_config3: bool = False, ttl_config4: bool = False, ttl_config5: bool = False) -> Tuple[pd.DataFrame, List[str]]:
     """Return incremental pivot for a program+version limited to weeks on/after the version date (horizon)."""
     sub = long_df[(long_df["Program"] == program) & (long_df["MPS Ver"] == version)].copy()
-    sub = _aggregate_for_ttl(sub, ttl_config1, ttl_config2)
+    sub = _aggregate_for_ttl(sub, ttl_config1, ttl_config2, ttl_config3, ttl_config4, ttl_config5)
     pivot, _ = _pivot_display(sub, "Incremental", mapping, include_config_percent=False)
     # Filter to horizon weeks
     wk_to_date = mapping.drop_duplicates(subset=[M.wk_code]).set_index(M.wk_code)[M.date_code].to_dict()
-    key_cols = [c for c in ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2"] if c in pivot.columns]
+    key_cols = [c for c in ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"] if c in pivot.columns]
     week_cols = [c for c in pivot.columns if c not in key_cols]
     week_cols_hz = [wk for wk in week_cols if pd.notna(wk_to_date.get(wk)) and wk_to_date[wk] >= ver_date]
     filtered = pivot[[*key_cols, *week_cols_hz]].copy()
@@ -293,8 +314,8 @@ def build_inc_pivot_for_horizon(long_df: pd.DataFrame, mapping: pd.DataFrame, pr
 
 
 def compute_to_go_by_bucket(inc_pivot: pd.DataFrame, week_cols: List[str]) -> pd.DataFrame:
-    """Compute to-go totals per (Config1, Config2) row from an incremental pivot."""
-    base_cols = [c for c in ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2"] if c in inc_pivot.columns]
+    """Compute to-go totals per (Config1-5) row from an incremental pivot."""
+    base_cols = [c for c in ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"] if c in inc_pivot.columns]
     res = inc_pivot[base_cols].copy()
     res["ToGo"] = inc_pivot[week_cols].sum(axis=1)
     total = res["ToGo"].sum()
@@ -302,27 +323,27 @@ def compute_to_go_by_bucket(inc_pivot: pd.DataFrame, week_cols: List[str]) -> pd
     return res
 
 
-def split_request_across_buckets(to_go_df: pd.DataFrame, signed_amount: float, targeted: Optional[Dict[Tuple[str, str], float]] = None) -> Dict[Tuple[str, str], float]:
-    """Split a signed request (negative=cut, positive=add) across Config1xConfig2 buckets.
+def split_request_across_buckets(to_go_df: pd.DataFrame, signed_amount: float, targeted: Optional[Dict[Tuple[str, str, str, str, str], float]] = None) -> Dict[Tuple[str, str, str, str, str], float]:
+    """Split a signed request (negative=cut, positive=add) across Config1-5 buckets.
 
-    If targeted provided, use exact values per (Config1, Config2). Otherwise, split by Mix.
+    If targeted provided, use exact values per (Config1-5). Otherwise, split by Mix.
     """
-    allocations: Dict[Tuple[str, str], float] = {}
+    allocations: Dict[Tuple[str, str, str, str, str], float] = {}
     if targeted:
         allocations = dict(targeted)
     else:
         for _, row in to_go_df.iterrows():
-            key = (str(row.get("Config 1")), str(row.get("Config 2")))
+            key = (str(row.get("Config 1")), str(row.get("Config 2")), str(row.get("Config 3")), str(row.get("Config 4")), str(row.get("Config 5")))
             allocations[key] = float(signed_amount) * float(row.get("Mix", 0.0))
     return allocations
 
 
-def lifo_apply_allocation(inc_pivot: pd.DataFrame, week_cols: List[str], allocations: Dict[Tuple[str, str], float]) -> pd.DataFrame:
+def lifo_apply_allocation(inc_pivot: pd.DataFrame, week_cols: List[str], allocations: Dict[Tuple[str, str, str, str, str], float]) -> pd.DataFrame:
     """Apply per-bucket signed allocation amounts across weeks using LIFO (latest week backward). No negatives allowed."""
     result = inc_pivot.copy()
     # Ensure numeric
     result[week_cols] = result[week_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
-    idx_map = {(str(row["Config 1"]), str(row["Config 2"])): i for i, row in result.iterrows()}
+    idx_map = {(str(row["Config 1"]), str(row["Config 2"]), str(row["Config 3"]), str(row["Config 4"]), str(row["Config 5"])): i for i, row in result.iterrows()}
     # Iterate allocations
     for key, amt in allocations.items():
         if key not in idx_map:
@@ -353,13 +374,13 @@ def lifo_apply_allocation(inc_pivot: pd.DataFrame, week_cols: List[str], allocat
 
 
 def build_simulation_export(original_inc: pd.DataFrame, simulated_inc: pd.DataFrame, week_cols: List[str], mps_ver: str, program: str, action_label: str) -> pd.DataFrame:
-    """Return ONLY the simulated rows for export per PRD v1.9.
+    """Return ONLY the simulated rows for export per PRD v2.0.
 
-    Schema: Program, Config 1, Config 2, MPS Ver, MPS Type, weeks.
+    Schema: Program, Config 1-5, MPS Ver, MPS Type, weeks.
     MPS Type label like "Simulation <X> cut|add on <Program>".
     Export format matches input schema exactly per PRD Section 5.6.
     """
-    meta_cols = [c for c in ["Program", "Config 1", "Config 2"] if c in simulated_inc.columns]
+    meta_cols = [c for c in ["Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"] if c in simulated_inc.columns]
     sim_rows_out = simulated_inc[meta_cols].copy()
     sim_rows_out["MPS Ver"] = mps_ver
     sim_rows_out["MPS Type"] = action_label
@@ -368,8 +389,8 @@ def build_simulation_export(original_inc: pd.DataFrame, simulated_inc: pd.DataFr
     for wk in week_cols:
         sim_rows_out[wk] = simulated_inc[wk].values if wk in simulated_inc.columns else 0.0
     
-    # Ensure export columns match PRD specification exactly: Program, Config 1, Config 2, MPS Ver, MPS Type, then weeks
-    export_cols = ["Program", "Config 1", "Config 2", "MPS Ver", "MPS Type"] + week_cols
+    # Ensure export columns match PRD specification exactly: Program, Config 1-5, MPS Ver, MPS Type, then weeks
+    export_cols = ["Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "MPS Ver", "MPS Type"] + week_cols
     return sim_rows_out[export_cols]
 
 
@@ -380,11 +401,14 @@ def build_comparison_table(
 	selected_versions: Sequence[str],
 	ttl_config1: bool,
 	ttl_config2: bool,
+	ttl_config3: bool = False,
+	ttl_config4: bool = False,
+	ttl_config5: bool = False,
 	include_config_percent: bool = True,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
 	"""Create display table for comparison view including only selected versions."""
 	subset = long_df[long_df["MPS Ver"].isin(selected_versions)].copy()
-	subset = _aggregate_for_ttl(subset, ttl_config1, ttl_config2)
+	subset = _aggregate_for_ttl(subset, ttl_config1, ttl_config2, ttl_config3, ttl_config4, ttl_config5)
 	return _pivot_display(subset, metric, mapping, include_config_percent)
 
 
@@ -396,23 +420,26 @@ def build_delta_table(
 	comparison_versions: Sequence[str],
 	ttl_config1: bool,
 	ttl_config2: bool,
+	ttl_config3: bool = False,
+	ttl_config4: bool = False,
+	ttl_config5: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, str]]:
 	"""Compute Anchor - Comparison deltas for each comparison version.
 
 	Rows correspond to each comparison version with same Program/Configs.
 	"""
 	anchor_df = long_df[long_df["MPS Ver"] == anchor_version].copy()
-	anchor_df = _aggregate_for_ttl(anchor_df, ttl_config1, ttl_config2)
+	anchor_df = _aggregate_for_ttl(anchor_df, ttl_config1, ttl_config2, ttl_config3, ttl_config4, ttl_config5)
 	anchor_pivot, _ = _pivot_display(anchor_df, metric, mapping, include_config_percent=False)
 
 	all_delta_rows: List[pd.DataFrame] = []
 	for ver in comparison_versions:
 		comp_df = long_df[long_df["MPS Ver"] == ver].copy()
-		comp_df = _aggregate_for_ttl(comp_df, ttl_config1, ttl_config2)
+		comp_df = _aggregate_for_ttl(comp_df, ttl_config1, ttl_config2, ttl_config3, ttl_config4, ttl_config5)
 		comp_pivot, _ = _pivot_display(comp_df, metric, mapping, include_config_percent=False)
 
 		# Align on Program/Config rows
-		join_keys = ["Program", "Config 1", "Config 2"]
+		join_keys = ["Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]
 		merged = pd.merge(
 			anchor_pivot,
 			comp_pivot,
