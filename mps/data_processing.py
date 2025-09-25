@@ -45,14 +45,14 @@ def load_mapping(base_dir: str) -> pd.DataFrame:
 	# Keep a separate lookup for Cymw (version labels)
 	cymw_lookup = pd.read_csv(mapping_path)
 	cymw_lookup[M.date_code] = pd.to_datetime(cymw_lookup[M.date_code], errors="coerce")
-	cymw_lookup = cymw_lookup.dropna(subset=[M.date_code, M.cymw])
+	cymw_lookup = cymw_lookup.dropna(subset=[M.date_code, M.cymw, M.fymw])
 	cymw_lookup = cymw_lookup.sort_values(M.date_code).drop_duplicates(subset=[M.cymw], keep="first")
 
 	# Attach a suffix to avoid column clashes on merge
-	cymw_lookup = cymw_lookup[[M.cymw, M.date_code, M.wk_code, M.quarter]].rename(
+	cymw_lookup = cymw_lookup[[M.cymw, M.date_code, M.fymw, M.quarter]].rename(
 		columns={
 			M.date_code: "Ver_Date",
-			M.wk_code: "Ver_Wk_Code",
+			M.fymw: "Ver_Wk_Code",
 			M.quarter: "Ver_Quarter",
 		}
 	)
@@ -65,11 +65,11 @@ def load_mapping(base_dir: str) -> pd.DataFrame:
 
 
 def week_columns_order(mapping: pd.DataFrame, restrict_to: Optional[Sequence[str]] = None) -> List[str]:
-	"""Return ordered list of week display headers (Wk_Code) by ascending Date_Code.
+	"""Return ordered list of week display headers (Fymw) by ascending Date_Code.
 
 	If restrict_to provided, the list is filtered to those week codes only.
 	"""
-	ordered = mapping.sort_values(M.date_code)[M.wk_code].tolist()
+	ordered = mapping.sort_values(M.date_code)[M.fymw].tolist()
 	if restrict_to is None:
 		return ordered
 	allowed = set(restrict_to)
@@ -201,7 +201,7 @@ def _aggregate_for_ttl(df: pd.DataFrame, ttl_config1: bool, ttl_config2: bool, t
 	if ttl_config5:
 		res["Config 5"] = "TTL"
 	if ttl_config1 or ttl_config2 or ttl_config3 or ttl_config4 or ttl_config5:
-		group_cols = ["MPS Ver", "Ver_Date", "Ver_Wk_Code", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "MPS Type", M.date_code, M.wk_code, M.quarter]
+		group_cols = ["MPS Ver", "Ver_Date", "Ver_Wk_Code", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5", "MPS Type", M.date_code, M.fymw, M.quarter]
 		res = (
 			res.groupby(group_cols, as_index=False)[["Incremental", "Cumulative"]]
 			.sum()
@@ -225,13 +225,13 @@ def _pivot_display(
 		return pd.DataFrame(columns=index_cols), {}
 
 	# Determine week columns in order
-	ordered_weeks = week_columns_order(mapping, restrict_to=df[M.wk_code].unique())
+	ordered_weeks = week_columns_order(mapping, restrict_to=df[M.fymw].unique())
 	# Build pivot so that columns are week codes
 	pivot = (
 		pd.pivot_table(
 			df,
 			index=index_cols,
-			columns=M.wk_code,
+			columns=M.fymw,
 			values=metric,
 			aggfunc="sum",
 			fill_value=0.0,
@@ -273,7 +273,7 @@ def _pivot_display(
 
 	# Quarter banding metadata
 	week_to_quarter = (
-		mapping.drop_duplicates(subset=[M.wk_code]).set_index(M.wk_code)[M.quarter].to_dict()
+		mapping.drop_duplicates(subset=[M.fymw]).set_index(M.fymw)[M.quarter].to_dict()
 	)
 	return pivot, week_to_quarter
 
@@ -305,12 +305,22 @@ def build_inc_pivot_for_horizon(long_df: pd.DataFrame, mapping: pd.DataFrame, pr
     sub = _aggregate_for_ttl(sub, ttl_config1, ttl_config2, ttl_config3, ttl_config4, ttl_config5)
     pivot, _ = _pivot_display(sub, "Incremental", mapping, include_config_percent=False)
     # Filter to horizon weeks
-    wk_to_date = mapping.drop_duplicates(subset=[M.wk_code]).set_index(M.wk_code)[M.date_code].to_dict()
+    wk_to_date = mapping.drop_duplicates(subset=[M.fymw]).set_index(M.fymw)[M.date_code].to_dict()
     key_cols = [c for c in ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"] if c in pivot.columns]
     week_cols = [c for c in pivot.columns if c not in key_cols]
     week_cols_hz = [wk for wk in week_cols if pd.notna(wk_to_date.get(wk)) and wk_to_date[wk] >= ver_date]
     filtered = pivot[[*key_cols, *week_cols_hz]].copy()
     return filtered, week_cols_hz
+
+
+def get_full_por_time_span(long_df: pd.DataFrame, mapping: pd.DataFrame, program: str, version: str, ttl_config1: bool, ttl_config2: bool, ttl_config3: bool = False, ttl_config4: bool = False, ttl_config5: bool = False) -> Tuple[pd.DataFrame, List[str]]:
+    """Return incremental pivot for a program+version with full time span (not limited to horizon)."""
+    sub = long_df[(long_df["Program"] == program) & (long_df["MPS Ver"] == version)].copy()
+    sub = _aggregate_for_ttl(sub, ttl_config1, ttl_config2, ttl_config3, ttl_config4, ttl_config5)
+    pivot, _ = _pivot_display(sub, "Incremental", mapping, include_config_percent=False)
+    key_cols = [c for c in ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"] if c in pivot.columns]
+    week_cols = [c for c in pivot.columns if c not in key_cols]
+    return pivot, week_cols
 
 
 def compute_to_go_by_bucket(inc_pivot: pd.DataFrame, week_cols: List[str]) -> pd.DataFrame:
@@ -487,7 +497,7 @@ def build_delta_table(
 	delta_df = delta_df.sort_values(["_order", "Program", "Config 1", "Config 2"]).drop(columns=["_order"])
 
 	week_to_quarter = (
-		mapping.drop_duplicates(subset=[M.wk_code]).set_index(M.wk_code)[M.quarter].to_dict()
+		mapping.drop_duplicates(subset=[M.fymw]).set_index(M.fymw)[M.quarter].to_dict()
 	)
 	return delta_df, week_to_quarter
 

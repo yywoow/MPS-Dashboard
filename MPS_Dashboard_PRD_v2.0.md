@@ -1,4 +1,4 @@
-# MPS Dashboard Tool – Product Requirements Document (v2.0)
+# MPS Playground – Product Requirements Document (v2.0)
 
 **Date:** 2025-09-23  
 **Type:** Web App (Python + Streamlit)
@@ -6,7 +6,7 @@
 ---
 
 ## 1) Overview
-The MPS Dashboard Tool is a web-based application for reviewing Master Production Schedule (MPS) data.  
+The MPS Playground is a web-based application for reviewing Master Production Schedule (MPS) data.  
 Users upload their **MPS Excel file**; a pre-loaded mapping (Date_Code → Wk_Code → Quarter) is embedded.  
 The app standardizes weeks, computes incremental/cumulative series, supports TTL aggregation across **Config1–Config5**, enables version-to-version comparisons, and provides **MPS Simulation** (cut/add) at different granularities.  
 Layout: **table view only** with quarter banding, horizontally scrollable weeks, robust tab switching, and formatted numbers (e.g., `1,000,000`) and config percents (`x.xx%`).

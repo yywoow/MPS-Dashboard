@@ -1,4 +1,4 @@
-# MPS Dashboard Tool – Product Requirements Document (v1.9)
+# MPS Playground – Product Requirements Document (v1.9)
 
 **Date:** 2025-09-22  
 **Type:** Web App (Python + Streamlit)

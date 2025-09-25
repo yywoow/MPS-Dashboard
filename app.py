@@ -16,6 +16,7 @@ from mps.data_processing import dataframe_to_excel_bytes
 from mps.data_processing import (
     get_latest_version_for_program,
     build_inc_pivot_for_horizon,
+    get_full_por_time_span,
     compute_to_go_by_bucket,
     split_request_across_buckets,
     lifo_apply_allocation,
@@ -31,12 +32,12 @@ except Exception:  # pragma: no cover
 	AGGRID_AVAILABLE = False
 
 
-st.set_page_config(page_title="MPS Dashboard", layout="wide")
+st.set_page_config(page_title="MPS Playground", layout="wide")
 
 BASE_DIR = str(Path(__file__).resolve().parent)
 MAPPING_NOTE = "✅ Date mapping is already embedded. No need to upload."
 
-st.title("MPS Dashboard Tool")
+st.title("MPS Playground")
 st.caption(MAPPING_NOTE)
 
 # --- Load embedded mapping ---
@@ -1196,13 +1197,42 @@ with sim_tab:
 					st.dataframe(viol_df, use_container_width=True)
 					st.stop()
 
+				# Apply simulation to horizon weeks only
 				sim_inc = lifo_apply_allocation(inc_pivot_hz, week_cols_hz, allocations)
 
+				# Get full POR time span for display (not just horizon)
+				full_por_pivot, full_week_cols = get_full_por_time_span(
+					long_df=long_df, mapping=mapping, program=program_for_sim, version=mps_ver_latest, 
+					ttl_config1=ttl_config1, ttl_config2=ttl_config2, ttl_config3=ttl_config3, ttl_config4=ttl_config4, ttl_config5=ttl_config5
+				)
+
 				key_cols = ["Ver_Wk_Code", "MPS Type", "Program", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]
-				orig_inc = inc_pivot_hz.copy()
-				orig_inc = orig_inc[key_cols + week_cols_hz]
+				
+				# Original data with full time span
+				orig_inc = full_por_pivot.copy()
+				orig_inc = orig_inc[key_cols + full_week_cols]
 				if "MPS Type" not in orig_inc.columns:
 					orig_inc.insert(1, "MPS Type", "POR")
+
+				# Create simulation results with full time span
+				# Start with original full time span data
+				sim_inc_full = orig_inc.copy()
+				
+				# Update only the horizon weeks with simulated values
+				# Merge simulation results by matching config combinations
+				config_cols = ["Config 1", "Config 2", "Config 3", "Config 4", "Config 5"]
+				for i, orig_row in sim_inc_full.iterrows():
+					# Find matching row in simulation results
+					sim_match = sim_inc
+					for col in config_cols:
+						if col in sim_inc.columns:
+							sim_match = sim_match[sim_match[col] == orig_row[col]]
+					
+					if not sim_match.empty:
+						# Update horizon weeks with simulated values
+						for wk in week_cols_hz:
+							if wk in sim_match.columns:
+								sim_inc_full.loc[i, wk] = sim_match.iloc[0][wk]
 
 				# Calculate total amount applied for banner (per PRD v1.9)
 				total_amount_applied = abs(sum(allocations.values()))
@@ -1245,32 +1275,34 @@ with sim_tab:
 						action_label = f"Simulation {total_amount_applied:.0f} {action_word} on {configs_str} on {program_for_sim}"
 					else:
 						action_label = f"Simulation {total_amount_applied:.0f} {action_word} on {program_for_sim}"
-				sim_rows = sim_inc.copy()
+				# Prepare simulation rows with action label
+				sim_rows = sim_inc_full.copy()
 				if "MPS Type" in sim_rows.columns:
 					sim_rows["MPS Type"] = action_label
 				else:
 					sim_rows.insert(1, "MPS Type", action_label)
-				sim_rows = sim_rows[key_cols + week_cols_hz]
+				sim_rows = sim_rows[key_cols + full_week_cols]
 
+				# Create delta comparison using full time span
 				delta_rows = sim_rows.copy()
-				for wk in week_cols_hz:
+				for wk in full_week_cols:
 					delta_rows[wk] = sim_rows[wk].fillna(0.0) - orig_inc[wk].fillna(0.0)
 				delta_rows["MPS Type"] = "Δ (Sim - Orig)"
 
 				# Banner format per PRD v1.9 Section 5.5: "Simulation applied: Cut X at <granularity> on <Program>"
 				banner_action = action_word.capitalize()
 				st.success(f"Simulation applied: {banner_action} {total_amount_applied:.0f} at {granularity} on {program_for_sim}")
-				st.markdown("**Original (Incremental, horizon)**")
-				render_aggrid(orig_inc, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in week_cols_hz}, is_delta=False, key="sim_orig")
+				st.markdown("**Original (Incremental, full time span)**")
+				render_aggrid(orig_inc, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in full_week_cols}, is_delta=False, key="sim_orig")
 				st.divider()
-				st.markdown("**Simulated (Incremental, horizon)**")
-				render_aggrid(sim_rows, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in week_cols_hz}, is_delta=False, key="sim_sim")
+				st.markdown("**Simulated (Incremental, full time span)**")
+				render_aggrid(sim_rows, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in full_week_cols}, is_delta=False, key="sim_sim")
 				st.divider()
 				st.markdown("**Delta (Simulated − Original)**")
-				render_aggrid(delta_rows, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in week_cols_hz}, is_delta=True, key="sim_delta")
+				render_aggrid(delta_rows, {wk: comp_week_quarter.get(wk) or delta_week_quarter.get(wk) for wk in full_week_cols}, is_delta=True, key="sim_delta")
 
 				# Export simulation-only
-				export_df = build_simulation_export(orig_inc, sim_rows, week_cols_hz, mps_ver_latest, program_for_sim, action_label)
+				export_df = build_simulation_export(orig_inc, sim_rows, full_week_cols, mps_ver_latest, program_for_sim, action_label)
 				csv_sim = export_df.to_csv(index=False).encode("utf-8")
 				st.download_button("Export Simulation CSV", data=csv_sim, file_name="simulation_export.csv", mime="text/csv")
 				xlsx_sim = dataframe_to_excel_bytes(export_df, sheet_name="Simulation")
